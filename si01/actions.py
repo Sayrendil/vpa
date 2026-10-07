@@ -99,6 +99,13 @@ TOOLS = [
     },
 ]
 
+# Те же инструменты в формате OpenAI function calling.
+OPENAI_TOOLS = [
+    {"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                      "parameters": t["input_schema"], "strict": t["strict"]}}
+    for t in TOOLS
+]
+
 
 @dataclass
 class ActionResult:

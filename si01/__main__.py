@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import timedelta
 
-import anthropic
+import openai
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand, BotCommandScopeChat
 from aiohttp import web
@@ -80,14 +80,14 @@ async def main() -> None:
     await database.create_all()
     facts = load_facts(s.facts_path)
     greetings = load_greetings(s.greetings_path)
-    if s.anthropic_api_key:
-        client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key)
+    if s.openai_api_key:
+        client = openai.AsyncOpenAI(api_key=s.openai_api_key)
     else:
         from .stub_llm import StubClient
-        log.warning("ANTHROPIC_API_KEY пуст — ТЕСТОВЫЙ РЕЖИМ БЕЗ AI: ответы по ключевым словам")
+        log.warning("OPENAI_API_KEY пуст — ТЕСТОВЫЙ РЕЖИМ БЕЗ AI: ответы по ключевым словам")
         client = StubClient()
     brain = Brain(s, facts, client)
-    stt = SpeechToText(s.stt_base_url, s.stt_api_key, s.stt_model) if s.stt_enabled else None
+    stt = SpeechToText(s.stt_base_url, s.stt_api_key or s.openai_api_key, s.stt_model) if s.stt_enabled else None
     log.info("SI-01: model=%s prompt=%s facts=%s voice=%s", s.llm_model, brain.prompt_version,
              facts.version, bool(stt))
 
@@ -108,7 +108,7 @@ async def main() -> None:
         log.warning("TRIBUTE_API_KEY пуст — вебхуки Tribute выключены")
     if s.admin_panel_password:
         setup_admin(app, ops, info={
-            "Модель": s.llm_model if s.anthropic_api_key else "ТЕСТОВЫЙ РЕЖИМ БЕЗ AI",
+            "Модель": s.llm_model if s.openai_api_key else "ТЕСТОВЫЙ РЕЖИМ БЕЗ AI",
             "Промпт": brain.prompt_version, "Факты": facts.version,
             "Голос": "вкл" if stt else "выкл", "Tribute": "вкл" if s.tribute_api_key else "выкл",
             "Хранение логов": f"{s.log_retention_days} дн.", "Сессия": f"{s.session_idle_hours} ч тишины",

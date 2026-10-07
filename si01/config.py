@@ -15,10 +15,11 @@ class Settings(BaseSettings):
     admin_chat_id: int = 0
     admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
 
-    anthropic_api_key: str = ""
-    llm_model: str = "claude-opus-5-5"
+    openai_api_key: str = ""
+    llm_model: str = "gpt-5.5"
+    # reasoning_effort: low | medium | high; пусто — для моделей без рассуждений.
     llm_effort: str = "medium"
-    llm_aux_model: str = "claude-opus-5-5"
+    llm_aux_model: str = "gpt-5-mini"
     llm_max_tokens: int = 16000
 
     database_url: str = f"sqlite+aiosqlite:///{ROOT / 'si01.db'}"

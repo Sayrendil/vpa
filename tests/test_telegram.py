@@ -12,7 +12,7 @@ from si01.brain import Brain
 from si01.db import AdminRequest, User
 from si01.telegram import build_router
 
-from .conftest import FakeClient, block, response
+from .conftest import FakeClient, response
 
 NOW = datetime.now(timezone.utc)
 
@@ -61,7 +61,7 @@ async def make(settings, facts, database, client):
 
 
 async def test_text_goes_through_brain(settings, facts, database):
-    client = FakeClient(response(block("text", text="Сейчас 2700 ₽ в месяц.")))
+    client = FakeClient(response("Сейчас 2700 ₽ в месяц."))
     bot, dp, session = await make(settings, facts, database, client)
     await dp.feed_update(bot, private_update(1, text="сколько стоит?"))
     assert [m.text for m in session.sent(42)] == ["Сейчас 2700 ₽ в месяц."]
@@ -109,7 +109,7 @@ async def test_circle_to_admins_then_approve_sends_link(settings, facts, databas
 
 
 async def test_voice_without_stt_goes_to_model(settings, facts, database):
-    client = FakeClient(response(block("text", text="Голосовые пока не слушаю — напиши текстом?")))
+    client = FakeClient(response("Голосовые пока не слушаю — напиши текстом?"))
     bot, dp, session = await make(settings, facts, database, client)
     await dp.feed_update(bot, private_update(4, voice={"file_id": "f", "file_unique_id": "u", "duration": 3}))
     assert "голосовое" in client.calls[0]["messages"][0]["content"]

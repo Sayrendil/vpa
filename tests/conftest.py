@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -30,14 +31,20 @@ class FakeOutbox:
         self.admin_texts.append(text)
 
 
-def block(type_, **kw):
-    return SimpleNamespace(type=type_, **kw)
+def tool_call(id_, name, args):
+    return SimpleNamespace(id=id_, type="function",
+                           function=SimpleNamespace(name=name, arguments=json.dumps(args)))
 
 
-def response(*content, stop="end_turn"):
-    return SimpleNamespace(content=list(content), stop_reason=stop, stop_details=None, model="claude-opus-5-5",
-                           usage=SimpleNamespace(input_tokens=10, output_tokens=5, cache_read_input_tokens=0,
-                                                 cache_creation_input_tokens=0, iterations=None))
+def response(text=None, tool_calls=None):
+    msg = SimpleNamespace(content=text, refusal=None, tool_calls=tool_calls)
+    return SimpleNamespace(
+        model="gpt-5.5",
+        choices=[SimpleNamespace(message=msg, finish_reason="tool_calls" if tool_calls else "stop")],
+        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5,
+                              prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+                              completion_tokens_details=SimpleNamespace(reasoning_tokens=0)),
+    )
 
 
 class FakeClient:
@@ -46,8 +53,7 @@ class FakeClient:
     def __init__(self, *responses):
         self.queue = list(responses)
         self.calls = []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
-        self.messages = SimpleNamespace(create=self._create)
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     async def _create(self, **kw):
         self.calls.append({**kw, "messages": list(kw.get("messages", []))})

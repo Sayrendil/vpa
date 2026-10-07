@@ -7,11 +7,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 
-import anthropic
+import openai
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .actions import TOOLS, ActionLog, Actions, Notifier
+from .actions import OPENAI_TOOLS, ActionLog, Actions, Notifier
 from .config import Settings
 from .db import Message, TurnLog, User, aware, utcnow
 from .facts import Facts
@@ -19,7 +19,6 @@ from .states import STAGE_INFO, Source, Stage, refresh_membership, transition
 
 log = logging.getLogger(__name__)
 
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_TOOL_ROUNDS = 4
 
 ERROR_REPLY = "Сейчас у меня что-то сломалось и нормально ответить не могу. Напиши чуть позже, ладно?"
@@ -43,7 +42,7 @@ def load_prompt(path) -> tuple[str, str]:
 
 
 class Brain:
-    def __init__(self, settings: Settings, facts: Facts, client: anthropic.AsyncAnthropic,
+    def __init__(self, settings: Settings, facts: Facts, client: openai.AsyncOpenAI,
                  capabilities: dict[str, bool] | None = None):
         self.s = settings
         self.facts = facts
@@ -113,9 +112,6 @@ class Brain:
                 msgs[-1]["content"] += "\n\n" + m.content
             else:
                 msgs.append({"role": m.role, "content": m.content})
-        if msgs and msgs[0]["role"] == "assistant":
-            # /start-приветствие было первым — API требует, чтобы история начиналась с user.
-            msgs.insert(0, {"role": "user", "content": "/start"})
         if msgs and msgs[-1]["role"] == "user":
             msgs[-1]["content"] += "\n\n" + user_text
         else:
@@ -159,59 +155,67 @@ class Brain:
         await self.maybe_summarize(db, user)
         return TurnResult(text, actions.log, stage_before, user.stage, turn)
 
+    def _effort(self, effort: str) -> dict:
+        # reasoning_effort понимают только reasoning-модели (gpt-5 и т.п.); пусто = не отправляем.
+        return {"reasoning_effort": effort} if effort else {}
+
     async def _run(self, messages: list[dict], actions: Actions) -> tuple[str, str | None, dict]:
         usage_total: dict[str, int] = {}
-        fallback = None
+        # Промпт и факты идут первыми и не меняются между ходами — OpenAI кэширует такой префикс сам.
+        messages = [{"role": "system", "content": self.prompt},
+                    {"role": "system", "content": self.facts.text}, *messages]
         for _ in range(MAX_TOOL_ROUNDS + 1):
             try:
-                resp = await self.client.beta.messages.create(
+                resp = await self.client.chat.completions.create(
                     model=self.s.llm_model,
-                    max_tokens=self.s.llm_max_tokens,
-                    system=[
-                        {"type": "text", "text": self.prompt},
-                        {"type": "text", "text": self.facts.text, "cache_control": {"type": "ephemeral"}},
-                    ],
+                    max_completion_tokens=self.s.llm_max_tokens,
                     messages=messages,
-                    tools=TOOLS,
-                    output_config={"effort": self.s.llm_effort},
-                    cache_control={"type": "ephemeral"},
-                    fallbacks="default",
-                    betas=[FALLBACK_BETA],
+                    tools=OPENAI_TOOLS,
+                    **self._effort(self.s.llm_effort),
                 )
-            except anthropic.RateLimitError:
+            except openai.RateLimitError:
                 log.warning("LLM rate limited")
                 return ERROR_REPLY, None, usage_total
-            except anthropic.APIStatusError as e:
+            except openai.APIStatusError as e:
                 log.error("LLM API error %s: %s", e.status_code, e.message)
                 return ERROR_REPLY, None, usage_total
-            except anthropic.APIConnectionError:
+            except openai.APIConnectionError:
                 log.error("LLM connection error")
                 return ERROR_REPLY, None, usage_total
 
-            for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-                usage_total[k] = usage_total.get(k, 0) + (getattr(resp.usage, k, 0) or 0)
-            if any(getattr(it, "type", "") == "fallback_message" for it in (getattr(resp.usage, "iterations", None) or [])):
-                fallback = resp.model
+            u = resp.usage
+            if u:
+                cached = getattr(u.prompt_tokens_details, "cached_tokens", 0) if u.prompt_tokens_details else 0
+                reasoning = (getattr(u.completion_tokens_details, "reasoning_tokens", 0)
+                             if u.completion_tokens_details else 0)
+                for k, v in (("input_tokens", u.prompt_tokens), ("output_tokens", u.completion_tokens),
+                             ("cached_tokens", cached), ("reasoning_tokens", reasoning)):
+                    usage_total[k] = usage_total.get(k, 0) + (v or 0)
 
-            if resp.stop_reason == "refusal":
-                log.warning("LLM refusal: %s", resp.stop_details)
-                return REFUSAL_REPLY, fallback, usage_total
+            choice = resp.choices[0]
+            msg = choice.message
+            if msg.refusal or choice.finish_reason == "content_filter":
+                log.warning("LLM refusal: %s", msg.refusal or choice.finish_reason)
+                return REFUSAL_REPLY, None, usage_total
 
-            if resp.stop_reason != "tool_use":
-                text = "".join(b.text for b in resp.content if b.type == "text").strip()
-                return (text or "🙂"), fallback, usage_total
+            if not msg.tool_calls:
+                return ((msg.content or "").strip() or "🙂"), None, usage_total
 
-            messages.append({"role": "assistant", "content": resp.content})
-            results = []
-            for block in resp.content:
-                if block.type != "tool_use":
-                    continue
-                args = block.input if isinstance(block.input, dict) else json.loads(block.input or "{}")
-                res = await actions.run(block.name, args)
-                results.append({"type": "tool_result", "tool_use_id": block.id,
-                                "content": res.message, "is_error": not res.ok})
-            messages.append({"role": "user", "content": results})
-        return ERROR_REPLY, fallback, usage_total
+            messages.append({
+                "role": "assistant", "content": msg.content,
+                "tool_calls": [{"id": c.id, "type": "function",
+                                "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                               for c in msg.tool_calls],
+            })
+            for call in msg.tool_calls:
+                try:
+                    args = json.loads(call.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                res = await actions.run(call.function.name, args)
+                messages.append({"role": "tool", "tool_call_id": call.id,
+                                 "content": res.message if res.ok else f"ОШИБКА: {res.message}"})
+        return ERROR_REPLY, None, usage_total
 
     # ---------- сжатие длинной истории ----------
 
@@ -230,17 +234,18 @@ class Brain:
             + f"Переписка:\n{transcript}"
         )
         try:
-            resp = await self.client.messages.create(
-                model=self.s.llm_aux_model, max_tokens=4000,
-                output_config={"effort": "low"},
+            resp = await self.client.chat.completions.create(
+                model=self.s.llm_aux_model, max_completion_tokens=4000,
                 messages=[{"role": "user", "content": prompt}],
+                **self._effort("low" if self.s.llm_effort else ""),
             )
-        except anthropic.APIError as e:
+        except openai.APIError as e:
             log.warning("summary failed: %s", e)
             return
-        if resp.stop_reason == "refusal":
+        msg = resp.choices[0].message
+        if msg.refusal:
             return
-        summary = "".join(b.text for b in resp.content if b.type == "text").strip()
+        summary = (msg.content or "").strip()
         if not summary:
             return
         user.session_summary = summary

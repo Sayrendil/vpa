@@ -13,7 +13,7 @@ from si01.facts import load_greetings
 from si01.states import Source, Stage, TransitionError, can_transition, refresh_membership, transition
 from si01.tribute import process_event, verify_signature
 
-from .conftest import FakeClient, FakeOutbox, block, response
+from .conftest import FakeClient, FakeOutbox, response, tool_call
 
 
 # ---------- стейт-машина ----------
@@ -143,46 +143,47 @@ def test_signature():
 async def test_brain_tool_loop_and_context(db, user, settings, facts):
     user.stage = "EXPLORING"
     client = FakeClient(
-        response(block("tool_use", id="t1", name="begin_verification", input={}), stop="tool_use"),
-        response(block("text", text="Погнали) Пришли кружок или голосовое сюда.")),
+        response(tool_calls=[tool_call("t1", "begin_verification", {})]),
+        response("Погнали) Пришли кружок или голосовое сюда."),
     )
     brain = Brain(settings, facts, client)
     res = await brain.handle(db, user, "всё, хочу зайти", FakeOutbox())
     assert res.text.startswith("Погнали") and user.stage == Stage.VERIFICATION_PENDING
     first = client.calls[0]
     assert first["messages"][-1]["role"] == "system" and "EXPLORING" in first["messages"][-1]["content"]
-    assert "2700" in first["system"][1]["text"]
+    assert first["messages"][0]["role"] == "system" and "2700" in first["messages"][1]["content"]
     second = client.calls[1]["messages"]
-    assert second[-1]["content"][0]["type"] == "tool_result" and not second[-1]["content"][0]["is_error"]
+    assert second[-2]["tool_calls"][0]["id"] == "t1"
+    assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "t1"
+    assert not second[-1]["content"].startswith("ОШИБКА")
     turn = res.turn_log
     assert turn.stage_before == "EXPLORING" and turn.stage_after == "VERIFICATION_PENDING"
     assert turn.prompt_version == "0.1.0" and turn.facts_version == facts.version
 
 
 async def test_brain_history_and_session_reset(db, user, settings, facts):
-    client = FakeClient(response(block("text", text="Хэлоу)")), response(block("text", text="2700 ₽ в месяц")),
-                        response(block("text", text="Привет снова")))
+    client = FakeClient(response("Хэлоу)"), response("2700 ₽ в месяц"), response("Привет снова"))
     brain = Brain(settings, facts, client)
     await brain.handle(db, user, "привет", FakeOutbox())
     await brain.handle(db, user, "сколько стоит?", FakeOutbox())
     msgs = client.calls[1]["messages"]
-    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "system"]
+    assert [m["role"] for m in msgs] == ["system", "system", "user", "assistant", "user", "system"]
     # 49 часов тишины -> новая сессия, но этап сохраняется
     user.stage = "VERIFICATION_REVIEW"
     user.last_activity_at = datetime.now(timezone.utc) - timedelta(hours=49)
     await brain.handle(db, user, "ну что там?", FakeOutbox())
     msgs = client.calls[2]["messages"]
-    assert [m["role"] for m in msgs] == ["user", "system"] and user.session_no == 2
+    assert [m["role"] for m in msgs] == ["system", "system", "user", "system"] and user.session_no == 2
     assert user.stage == Stage.VERIFICATION_REVIEW
 
 
 async def test_brain_api_error_not_saved_as_answer(db, user, settings, facts):
-    import anthropic, httpx2
-    req = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    import httpx2, openai
+    req = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
 
     class Boom(FakeClient):
         async def _create(self, **kw):
-            raise anthropic.APIConnectionError(request=req)
+            raise openai.APIConnectionError(request=req)
 
     brain = Brain(settings, facts, Boom())
     res = await brain.handle(db, user, "алло", FakeOutbox())

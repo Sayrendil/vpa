@@ -1,10 +1,11 @@
-"""Заглушка вместо Claude — когда ANTHROPIC_API_KEY пуст.
+"""Заглушка вместо OpenAI — когда OPENAI_API_KEY пуст.
 
 Нужна, чтобы проверить Telegram, админ-чат, проверку и этапы без платного API.
 Отвечает по ключевым словам и вызывает те же действия, что и настоящая модель.
 Характер и качество разговора так проверить нельзя.
 """
 
+import json
 import re
 from types import SimpleNamespace
 
@@ -22,31 +23,33 @@ def _ns(**kw):
     return SimpleNamespace(**kw)
 
 
-def _response(content, stop):
-    return _ns(content=content, stop_reason=stop, stop_details=None, model="stub",
-               usage=_ns(input_tokens=0, output_tokens=0, cache_read_input_tokens=0,
-                         cache_creation_input_tokens=0, iterations=None))
+def _response(content=None, tool_calls=None):
+    msg = _ns(content=content, refusal=None, tool_calls=tool_calls)
+    return _ns(model="stub", usage=None,
+               choices=[_ns(message=msg, finish_reason="tool_calls" if tool_calls else "stop")])
 
 
 def _text(t):
-    return _ns(type="text", text=TAG + t)
+    return _response(TAG + t)
+
+
+def _tool(name, args):
+    return _response(tool_calls=[_ns(id="stub1", type="function",
+                                     function=_ns(name=name, arguments=json.dumps(args, ensure_ascii=False)))])
 
 
 class StubClient:
     def __init__(self):
-        self.beta = _ns(messages=_ns(create=self._create))
-        self.messages = _ns(create=self._summary)
+        self.chat = _ns(completions=_ns(create=self._create))
 
-    async def _summary(self, **kw):
-        return _response([_ns(type="text", text="(тестовый режим: без краткого содержания)")], "end_turn")
-
-    async def _create(self, messages, **kw):
+    async def _create(self, messages, tools=None, **kw):
+        if not tools:
+            return _response("(тестовый режим: без краткого содержания)")
         last = messages[-1]
         # Второй круг: модель «получила» результат действия — пересказываем его.
-        if last["role"] == "user" and isinstance(last["content"], list):
-            res = last["content"][0]
-            prefix = "Сделано: " if not res["is_error"] else "Не получилось: "
-            return _response([_text(prefix + res["content"])], "end_turn")
+        if last["role"] == "tool":
+            res = last["content"]
+            return _text(res if res.startswith("ОШИБКА") else "Сделано: " + res)
 
         user_msgs = [m for m in messages if m["role"] == "user"]
         text = user_msgs[-1]["content"].split("\n\n")[-1].lower() if user_msgs else ""
@@ -55,8 +58,8 @@ class StubClient:
 
         for pattern, tool, args in RULES:
             if re.search(pattern, text):
-                return _response([_ns(type="tool_use", id="stub1", name=tool, input=args)], "tool_use")
+                return _tool(tool, args)
         if "сколько" in text or "цен" in text or "стоит" in text:
-            return _response([_text("Цена берётся из facts.yaml — с настоящей моделью тут будет живой ответ.")], "end_turn")
-        return _response([_text(f"Получил: «{text[:200]}». Твой этап: {stage}.\n"
-                                "Ключевые слова: «хочу вступить», «созвон», «ссылка», «позови живого».")], "end_turn")
+            return _text("Цена берётся из facts.yaml — с настоящей моделью тут будет живой ответ.")
+        return _text(f"Получил: «{text[:200]}». Твой этап: {stage}.\n"
+                     "Ключевые слова: «хочу вступить», «созвон», «ссылка», «позови живого».")

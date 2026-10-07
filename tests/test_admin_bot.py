@@ -9,7 +9,7 @@ from si01.brain import Brain
 from si01.db import AdminRequest, Message, TurnLog, User
 from si01.telegram import UserLocks, build_router
 
-from .conftest import FakeClient, block, response
+from .conftest import FakeClient, response
 from .test_admin_web import PanelSession
 from .test_telegram import NOW
 
@@ -57,7 +57,7 @@ async def seed(database, **user):
 
 
 async def test_admin_menu_only_for_admins(settings, facts, database):
-    client = FakeClient(response(block("text", text="Не понял)")))
+    client = FakeClient(response("Не понял)"))
     bot, dp, session = await make(settings, facts, database, client)
     await dp.feed_update(bot, text(42, "/admin"))
     assert session.sent(42)[0].text == "Не понял)"  # обычному человеку — просто разговор

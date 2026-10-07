@@ -5,7 +5,7 @@ description = "SI-01 — встречающий Telegram-бот VPA"
 requires-python = ">=3.11"
 dependencies = [
     "aiogram>=3.13",
-    "anthropic>=1.0",
+    "openai>=2.0",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
     "asyncpg>=0.29",

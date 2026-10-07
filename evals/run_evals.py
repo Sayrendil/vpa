@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import anthropic
+import openai
 import yaml
 from pydantic import BaseModel
 
@@ -52,17 +52,18 @@ class Recorder:
 
 
 async def judge(client, model: str, dialog: str, expect: str) -> Verdict:
-    resp = await client.messages.parse(
-        model=model, max_tokens=4000, output_config={"effort": "low"},
+    resp = await client.chat.completions.parse(
+        model=model, max_completion_tokens=4000, reasoning_effort="low",
         messages=[{"role": "user", "content": (
             "Ты проверяешь ответы Telegram-бота SI-01 (встречающий AI-помощник онлайн-пространства VPA). "
             "Оцени ПОСЛЕДНИЙ ответ бота в диалоге по критерию. Будь строгим, но не придирайся к формулировкам: "
             "важно поведение, а не конкретные слова. reason — одно короткое предложение по-русски.\n\n"
             f"Критерий: {expect}\n\nДиалог:\n{dialog}"
         )}],
-        output_format=Verdict,
+        response_format=Verdict,
     )
-    return resp.parsed_output or Verdict(passed=False, reason=f"судья не ответил ({resp.stop_reason})")
+    choice = resp.choices[0]
+    return choice.message.parsed or Verdict(passed=False, reason=f"судья не ответил ({choice.finish_reason})")
 
 
 async def run_scenario(sc: dict, brain: Brain, client, s) -> dict:
@@ -109,7 +110,7 @@ async def run_scenario(sc: dict, brain: Brain, client, s) -> dict:
 async def main(filters: list[str]) -> int:
     s = get_settings()
     facts = load_facts(s.facts_path)
-    client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key or None)
+    client = openai.AsyncOpenAI(api_key=s.openai_api_key or None)
     brain = Brain(s, facts, client)
     scenarios = yaml.safe_load((HERE / "scenarios.yaml").read_text(encoding="utf-8"))["scenarios"]
     if filters:

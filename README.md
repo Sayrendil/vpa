@@ -13,7 +13,7 @@ Python 3.11+, aiogram 3, Claude (`claude-opus-5-5`), SQLAlchemy (SQLite в ра�
 3. Настрой окружение:
    ```bash
    python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-   cp .env.example .env   # BOT_TOKEN, ADMIN_CHAT_ID, ADMIN_IDS, ANTHROPIC_API_KEY
+   cp .env.example .env   # BOT_TOKEN, ADMIN_CHAT_ID, ADMIN_IDS, OPENAI_API_KEY
    .venv/bin/python -m si01
    ```
 4. Напиши боту в личку. `/reset` (только для ADMIN_IDS) — сбросить себя в начало, чтобы пройти путь заново.

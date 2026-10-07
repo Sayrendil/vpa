@@ -114,3 +114,18 @@ async def test_voice_without_stt_goes_to_model(settings, facts, database):
     await dp.feed_update(bot, private_update(4, voice={"file_id": "f", "file_unique_id": "u", "duration": 3}))
     assert "голосовое" in client.calls[0]["messages"][0]["content"]
     assert session.sent(42)[0].text.startswith("Голосовые")
+
+
+async def test_approve_without_payment_url_does_not_crash(settings, facts, database):
+    settings.tribute_payment_url = ""
+    bot, dp, session = await make(settings, facts, database, FakeClient())
+    async with database.session() as db:
+        db.add(User(telegram_id=42, stage="VERIFICATION_REVIEW", verification_status="under_review"))
+        db.add(AdminRequest(telegram_id=42, kind="verification_media"))
+        await db.commit()
+    await dp.feed_update(bot, Update(update_id=200, callback_query={
+        "id": "c2", "chat_instance": "x", "data": "vr:a:1", "from": {"id": 1, "is_bot": False, "first_name": "A"},
+        "message": {"message_id": 777, "date": NOW, "chat": {"id": -100, "type": "supergroup"}, "text": "card"}}))
+    assert any("позже" in m.text for m in session.sent(42))
+    assert any("TRIBUTE_PAYMENT_URL" in m.text for m in session.sent(-100))
+    assert any(isinstance(r, EditMessageText) for r in session.requests)

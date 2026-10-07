@@ -52,7 +52,12 @@ async def main() -> None:
     await database.create_all()
     facts = load_facts(s.facts_path)
     greetings = load_greetings(s.greetings_path)
-    client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key or None)
+    if s.anthropic_api_key:
+        client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key)
+    else:
+        from .stub_llm import StubClient
+        log.warning("ANTHROPIC_API_KEY пуст — ТЕСТОВЫЙ РЕЖИМ БЕЗ AI: ответы по ключевым словам")
+        client = StubClient()
     brain = Brain(s, facts, client)
     stt = SpeechToText(s.stt_base_url, s.stt_api_key, s.stt_model) if s.stt_enabled else None
     log.info("SI-01: model=%s prompt=%s facts=%s voice=%s", s.llm_model, brain.prompt_version,

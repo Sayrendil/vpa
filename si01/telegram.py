@@ -75,9 +75,20 @@ class TelegramOutbox:
 
     async def flush(self) -> None:
         while self.deferred:
-            await self._send_link(self.deferred.pop(0))
+            chat_id = self.deferred.pop(0)
+            try:
+                await self._send_link(chat_id)
+            except Exception:
+                log.exception("payment link to %s failed", chat_id)
+                await self.admin_text(f"⚠️ Не удалось отправить ссылку на оплату пользователю {chat_id}. "
+                                      "Проверьте TRIBUTE_PAYMENT_URL и пришлите ссылку вручную.")
 
     async def _send_link(self, chat_id: int) -> None:
+        if not self.s.tribute_payment_url:
+            await self.bot.send_message(chat_id, "Ссылку на оплату пришлём сюда чуть позже.")
+            await self.admin_text(f"⚠️ TRIBUTE_PAYMENT_URL не настроен — пользователь {chat_id} одобрен, "
+                                  "но ссылку на оплату не получил.")
+            return
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Оплатить в Tribute", url=self.s.tribute_payment_url)]])
         await self.bot.send_message(chat_id, f"Подписка VPA — {self.facts.price_line}", reply_markup=kb)

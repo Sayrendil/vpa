@@ -23,10 +23,12 @@ def _ns(**kw):
     return SimpleNamespace(**kw)
 
 
-def _response(content=None, tool_calls=None):
-    msg = _ns(content=content, refusal=None, tool_calls=tool_calls)
-    return _ns(model="stub", usage=None,
-               choices=[_ns(message=msg, finish_reason="tool_calls" if tool_calls else "stop")])
+def _response(text=None, calls=()):
+    output = [_ns(type="function_call", call_id=c_id, name=name, arguments=json.dumps(args, ensure_ascii=False))
+              for c_id, name, args in calls]
+    if text is not None:
+        output.append(_ns(type="message", content=[_ns(type="output_text", text=text)]))
+    return _ns(model="stub", usage=None, incomplete_details=None, output=output, output_text=text or "")
 
 
 def _text(t):
@@ -34,24 +36,24 @@ def _text(t):
 
 
 def _tool(name, args):
-    return _response(tool_calls=[_ns(id="stub1", type="function",
-                                     function=_ns(name=name, arguments=json.dumps(args, ensure_ascii=False)))])
+    return _response(calls=[("stub1", name, args)])
 
 
 class StubClient:
     def __init__(self):
-        self.chat = _ns(completions=_ns(create=self._create))
+        self.responses = _ns(create=self._create)
 
-    async def _create(self, messages, tools=None, **kw):
+    async def _create(self, input, tools=None, **kw):
+        messages = input
         if not tools:
             return _response("(тестовый режим: без краткого содержания)")
         last = messages[-1]
         # Второй круг: модель «получила» результат действия — пересказываем его.
-        if last["role"] == "tool":
-            res = last["content"]
+        if last.get("type") == "function_call_output":
+            res = last["output"]
             return _text(res if res.startswith("ОШИБКА") else "Сделано: " + res)
 
-        user_msgs = [m for m in messages if m["role"] == "user"]
+        user_msgs = [m for m in messages if m.get("role") == "user"]
         text = user_msgs[-1]["content"].split("\n\n")[-1].lower() if user_msgs else ""
         stage = re.search(r"Этап человека: (\w+)", messages[-1]["content"])
         stage = stage.group(1) if stage else "?"

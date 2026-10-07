@@ -52,18 +52,17 @@ class Recorder:
 
 
 async def judge(client, model: str, dialog: str, expect: str) -> Verdict:
-    resp = await client.chat.completions.parse(
-        model=model, max_completion_tokens=4000, reasoning_effort="low",
-        messages=[{"role": "user", "content": (
+    resp = await client.responses.parse(
+        model=model, max_output_tokens=4000, reasoning={"effort": "low"}, store=False,
+        input=[{"role": "user", "content": (
             "Ты проверяешь ответы Telegram-бота SI-01 (встречающий AI-помощник онлайн-пространства VPA). "
             "Оцени ПОСЛЕДНИЙ ответ бота в диалоге по критерию. Будь строгим, но не придирайся к формулировкам: "
             "важно поведение, а не конкретные слова. reason — одно короткое предложение по-русски.\n\n"
             f"Критерий: {expect}\n\nДиалог:\n{dialog}"
         )}],
-        response_format=Verdict,
+        text_format=Verdict,
     )
-    choice = resp.choices[0]
-    return choice.message.parsed or Verdict(passed=False, reason=f"судья не ответил ({choice.finish_reason})")
+    return resp.output_parsed or Verdict(passed=False, reason=f"судья не ответил ({resp.status})")
 
 
 async def run_scenario(sc: dict, brain: Brain, client, s) -> dict:

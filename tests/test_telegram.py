@@ -112,7 +112,8 @@ async def test_voice_without_stt_goes_to_model(settings, facts, database):
     client = FakeClient(response("Голосовые пока не слушаю — напиши текстом?"))
     bot, dp, session = await make(settings, facts, database, client)
     await dp.feed_update(bot, private_update(4, voice={"file_id": "f", "file_unique_id": "u", "duration": 3}))
-    assert "голосовое" in client.calls[0]["messages"][0]["content"]
+    first_user = next(m for m in client.calls[0]["input"] if m.get("role") == "user")
+    assert "голосовое" in first_user["content"]
     assert session.sent(42)[0].text.startswith("Голосовые")
 
 

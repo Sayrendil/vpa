@@ -150,12 +150,13 @@ async def test_brain_tool_loop_and_context(db, user, settings, facts):
     res = await brain.handle(db, user, "всё, хочу зайти", FakeOutbox())
     assert res.text.startswith("Погнали") and user.stage == Stage.VERIFICATION_PENDING
     first = client.calls[0]
-    assert first["messages"][-1]["role"] == "system" and "EXPLORING" in first["messages"][-1]["content"]
-    assert first["messages"][0]["role"] == "system" and "2700" in first["messages"][1]["content"]
-    second = client.calls[1]["messages"]
-    assert second[-2]["tool_calls"][0]["id"] == "t1"
-    assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "t1"
-    assert not second[-1]["content"].startswith("ОШИБКА")
+    assert first["input"][-1]["role"] == "system" and "EXPLORING" in first["input"][-1]["content"]
+    assert first["input"][0]["role"] == "system" and "2700" in first["input"][1]["content"]
+    assert first["store"] is False
+    second = client.calls[1]["input"]
+    assert second[-2] == {"type": "function_call", "call_id": "t1", "name": "begin_verification", "arguments": "{}"}
+    assert second[-1]["type"] == "function_call_output" and second[-1]["call_id"] == "t1"
+    assert not second[-1]["output"].startswith("ОШИБКА")
     turn = res.turn_log
     assert turn.stage_before == "EXPLORING" and turn.stage_after == "VERIFICATION_PENDING"
     assert turn.prompt_version == "0.1.0" and turn.facts_version == facts.version
@@ -166,20 +167,20 @@ async def test_brain_history_and_session_reset(db, user, settings, facts):
     brain = Brain(settings, facts, client)
     await brain.handle(db, user, "привет", FakeOutbox())
     await brain.handle(db, user, "сколько стоит?", FakeOutbox())
-    msgs = client.calls[1]["messages"]
+    msgs = client.calls[1]["input"]
     assert [m["role"] for m in msgs] == ["system", "system", "user", "assistant", "user", "system"]
     # 49 часов тишины -> новая сессия, но этап сохраняется
     user.stage = "VERIFICATION_REVIEW"
     user.last_activity_at = datetime.now(timezone.utc) - timedelta(hours=49)
     await brain.handle(db, user, "ну что там?", FakeOutbox())
-    msgs = client.calls[2]["messages"]
+    msgs = client.calls[2]["input"]
     assert [m["role"] for m in msgs] == ["system", "system", "user", "system"] and user.session_no == 2
     assert user.stage == Stage.VERIFICATION_REVIEW
 
 
 async def test_brain_api_error_not_saved_as_answer(db, user, settings, facts):
     import httpx2, openai
-    req = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    req = httpx2.Request("POST", "https://api.openai.com/v1/responses")
 
     class Boom(FakeClient):
         async def _create(self, **kw):

@@ -31,19 +31,19 @@ class FakeOutbox:
         self.admin_texts.append(text)
 
 
-def tool_call(id_, name, args):
-    return SimpleNamespace(id=id_, type="function",
-                           function=SimpleNamespace(name=name, arguments=json.dumps(args)))
+def tool_call(call_id, name, args):
+    return SimpleNamespace(type="function_call", call_id=call_id, name=name, arguments=json.dumps(args))
 
 
-def response(text=None, tool_calls=None):
-    msg = SimpleNamespace(content=text, refusal=None, tool_calls=tool_calls)
+def response(text=None, tool_calls=()):
+    output = list(tool_calls)
+    if text is not None:
+        output.append(SimpleNamespace(type="message", content=[SimpleNamespace(type="output_text", text=text)]))
     return SimpleNamespace(
-        model="gpt-5.5",
-        choices=[SimpleNamespace(message=msg, finish_reason="tool_calls" if tool_calls else "stop")],
-        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5,
-                              prompt_tokens_details=SimpleNamespace(cached_tokens=0),
-                              completion_tokens_details=SimpleNamespace(reasoning_tokens=0)),
+        model="gpt-5.5", output=output, output_text=text or "", incomplete_details=None,
+        usage=SimpleNamespace(input_tokens=10, output_tokens=5,
+                              input_tokens_details=SimpleNamespace(cached_tokens=0),
+                              output_tokens_details=SimpleNamespace(reasoning_tokens=0)),
     )
 
 
@@ -53,10 +53,10 @@ class FakeClient:
     def __init__(self, *responses):
         self.queue = list(responses)
         self.calls = []
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        self.responses = SimpleNamespace(create=self._create)
 
     async def _create(self, **kw):
-        self.calls.append({**kw, "messages": list(kw.get("messages", []))})
+        self.calls.append({**kw, "input": list(kw.get("input", []))})
         return self.queue.pop(0)
 
 

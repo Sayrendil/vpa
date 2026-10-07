@@ -156,21 +156,25 @@ class Brain:
         return TurnResult(text, actions.log, stage_before, user.stage, turn)
 
     def _effort(self, effort: str) -> dict:
-        # reasoning_effort понимают только reasoning-модели (gpt-5 и т.п.); пусто = не отправляем.
-        return {"reasoning_effort": effort} if effort else {}
+        # reasoning понимают только reasoning-модели (gpt-5 и т.п.); пусто = не отправляем.
+        return {"reasoning": {"effort": effort}} if effort else {}
 
     async def _run(self, messages: list[dict], actions: Actions) -> tuple[str, str | None, dict]:
         usage_total: dict[str, int] = {}
         # Промпт и факты идут первыми и не меняются между ходами — OpenAI кэширует такой префикс сам.
-        messages = [{"role": "system", "content": self.prompt},
-                    {"role": "system", "content": self.facts.text}, *messages]
+        items: list[dict] = [{"role": "system", "content": self.prompt},
+                             {"role": "system", "content": self.facts.text}, *messages]
         for _ in range(MAX_TOOL_ROUNDS + 1):
             try:
-                resp = await self.client.chat.completions.create(
+                # store=False: переписка не хранится у OpenAI; рассуждения между кругами
+                # инструментов возвращаем сами в зашифрованном виде.
+                resp = await self.client.responses.create(
                     model=self.s.llm_model,
-                    max_completion_tokens=self.s.llm_max_tokens,
-                    messages=messages,
+                    max_output_tokens=self.s.llm_max_tokens,
+                    input=items,
                     tools=OPENAI_TOOLS,
+                    store=False,
+                    include=["reasoning.encrypted_content"],
                     **self._effort(self.s.llm_effort),
                 )
             except openai.RateLimitError:
@@ -185,36 +189,50 @@ class Brain:
 
             u = resp.usage
             if u:
-                cached = getattr(u.prompt_tokens_details, "cached_tokens", 0) if u.prompt_tokens_details else 0
-                reasoning = (getattr(u.completion_tokens_details, "reasoning_tokens", 0)
-                             if u.completion_tokens_details else 0)
-                for k, v in (("input_tokens", u.prompt_tokens), ("output_tokens", u.completion_tokens),
+                cached = getattr(u.input_tokens_details, "cached_tokens", 0) if u.input_tokens_details else 0
+                reasoning = (getattr(u.output_tokens_details, "reasoning_tokens", 0)
+                             if u.output_tokens_details else 0)
+                for k, v in (("input_tokens", u.input_tokens), ("output_tokens", u.output_tokens),
                              ("cached_tokens", cached), ("reasoning_tokens", reasoning)):
                     usage_total[k] = usage_total.get(k, 0) + (v or 0)
 
-            choice = resp.choices[0]
-            msg = choice.message
-            if msg.refusal or choice.finish_reason == "content_filter":
-                log.warning("LLM refusal: %s", msg.refusal or choice.finish_reason)
+            text, refusal, calls, carry = [], [], [], []
+            for it in resp.output:
+                if it.type == "reasoning":
+                    carry.append({"type": "reasoning", "id": it.id, "summary": [],
+                                  "encrypted_content": it.encrypted_content})
+                elif it.type == "function_call":
+                    calls.append(it)
+                    carry.append({"type": "function_call", "call_id": it.call_id,
+                                  "name": it.name, "arguments": it.arguments})
+                elif it.type == "message":
+                    for part in it.content:
+                        if part.type == "output_text":
+                            text.append(part.text)
+                        elif part.type == "refusal":
+                            refusal.append(part.refusal)
+
+            incomplete = getattr(resp.incomplete_details, "reason", None) if resp.incomplete_details else None
+            if refusal or incomplete == "content_filter":
+                log.warning("LLM refusal: %s", " ".join(refusal) or incomplete)
                 return REFUSAL_REPLY, None, usage_total
 
-            if not msg.tool_calls:
-                return ((msg.content or "").strip() or "🙂"), None, usage_total
+            if not calls:
+                if incomplete:
+                    log.warning("LLM incomplete: %s", incomplete)
+                return ("".join(text).strip() or "🙂"), None, usage_total
 
-            messages.append({
-                "role": "assistant", "content": msg.content,
-                "tool_calls": [{"id": c.id, "type": "function",
-                                "function": {"name": c.function.name, "arguments": c.function.arguments}}
-                               for c in msg.tool_calls],
-            })
-            for call in msg.tool_calls:
+            if text:
+                carry.append({"role": "assistant", "content": "".join(text)})
+            items += carry
+            for call in calls:
                 try:
-                    args = json.loads(call.function.arguments or "{}")
+                    args = json.loads(call.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                res = await actions.run(call.function.name, args)
-                messages.append({"role": "tool", "tool_call_id": call.id,
-                                 "content": res.message if res.ok else f"ОШИБКА: {res.message}"})
+                res = await actions.run(call.name, args)
+                items.append({"type": "function_call_output", "call_id": call.call_id,
+                              "output": res.message if res.ok else f"ОШИБКА: {res.message}"})
         return ERROR_REPLY, None, usage_total
 
     # ---------- сжатие длинной истории ----------
@@ -234,18 +252,15 @@ class Brain:
             + f"Переписка:\n{transcript}"
         )
         try:
-            resp = await self.client.chat.completions.create(
-                model=self.s.llm_aux_model, max_completion_tokens=4000,
-                messages=[{"role": "user", "content": prompt}],
+            resp = await self.client.responses.create(
+                model=self.s.llm_aux_model, max_output_tokens=4000, store=False,
+                input=[{"role": "user", "content": prompt}],
                 **self._effort("low" if self.s.llm_effort else ""),
             )
         except openai.APIError as e:
             log.warning("summary failed: %s", e)
             return
-        msg = resp.choices[0].message
-        if msg.refusal:
-            return
-        summary = (msg.content or "").strip()
+        summary = (resp.output_text or "").strip()
         if not summary:
             return
         user.session_summary = summary

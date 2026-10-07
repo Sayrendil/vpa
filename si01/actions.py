@@ -99,10 +99,10 @@ TOOLS = [
     },
 ]
 
-# Те же инструменты в формате OpenAI function calling.
+# Те же инструменты в формате OpenAI Responses API.
 OPENAI_TOOLS = [
-    {"type": "function", "function": {"name": t["name"], "description": t["description"],
-                                      "parameters": t["input_schema"], "strict": t["strict"]}}
+    {"type": "function", "name": t["name"], "description": t["description"],
+     "parameters": t["input_schema"], "strict": t["strict"]}
     for t in TOOLS
 ]
 

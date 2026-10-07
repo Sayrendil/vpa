@@ -67,7 +67,7 @@ Python 3.11+, aiogram 3, Claude (`claude-opus-5-5`), SQLAlchemy (SQLite в ра�
 
 ## Веб-админка
 
-`http://<сервер>/admin` — включается, когда задан `ADMIN_PANEL_PASSWORD`. Локально: `http://localhost:8080/admin`.
+`https://10.193.0.55/admin` (через VPN) — включается, когда задан `ADMIN_PANEL_PASSWORD`. Локально: `http://localhost:8080/admin`.
 
 - **Обзор** — сколько людей на каждом этапе, открытые запросы, ходы и фолбэки за сутки, версии промпта и фактов.
 - **Запросы** — проверки и обращения к людям: ✅/❌ для проверки, ✔️ «Закрыть» для остальных. Карточка в админ-чате
@@ -103,10 +103,23 @@ Python 3.11+, aiogram 3, Claude (`claude-opus-5-5`), SQLAlchemy (SQLite в ра�
 
 ## Сервер
 
-`docker compose up -d --build` — бот + Postgres. Наружу открыт порт **80** (`HTTP_PORT`, по умолчанию 80):
-`/admin` — админка, `/webhook/tribute` — вебхук, `/health`. Внутри контейнера сервер слушает 8080.
-Tribute шлёт вебхуки только на https, да и пароль админки по голому http уходит открытым текстом — поставьте перед
-сервером HTTPS (Cloudflare или nginx/Caddy с сертификатом; тогда `HTTP_PORT` можно сменить на внутренний).
+`docker compose up -d --build` — бот + Postgres + Caddy. Сервер в VPN: `https://10.193.0.55` (`SITE_ADDRESS`),
+с http (порт 80) редирект на https. Пути: `/admin`, `/webhook/tribute`, `/health`; сам бот наружу порт не открывает
+(внутри слушает 8080).
+
+Сертификат выпускает собственный CA Caddy (`tls internal`) — Let's Encrypt не выдаёт сертификаты на внутренние IP.
+Чтобы браузер не показывал предупреждение, один раз поставьте корневой сертификат на машины админов:
+
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+```
+
+Windows: двойной клик → «Установить» → «Доверенные корневые центры сертификации». macOS: Связка ключей → «Система» →
+доверять всегда. Linux: `sudo cp caddy-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`.
+Firefox держит свои сертификаты: Настройки → Сертификаты → Импорт.
+
+⚠️ Вебхуки Tribute приходят из интернета — до сервера, доступного только через VPN, они не дойдут. Для них нужен
+публичный адрес (домен с Let's Encrypt или туннель только для `/webhook/tribute`).
 Факты и промпт смонтированы томами: правка `config/facts.yaml` → `docker compose restart si01`.
 Аккаунты (сервер, Tribute API, Anthropic, домен) — на проект, не на личный аккаунт разработчика.
 

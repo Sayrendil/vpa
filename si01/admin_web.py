@@ -128,7 +128,7 @@ class AdminPanel:
         form = await request.post()
         if not hmac.compare_digest(str(form.get("password", "")).encode(), self.s.admin_panel_password.encode()):
             await asyncio.sleep(1)  # перебор паролей — помедленнее
-            log.warning("admin panel: wrong password from %s", request.remote)
+            log.warning("admin panel: wrong password from %s", request.headers.get("X-Forwarded-For", request.remote))
             return self.render(request, "login.html", error="Неверный пароль")
         resp = redirect("/admin")
         secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https"

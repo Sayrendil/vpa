@@ -26,8 +26,16 @@ class Settings(BaseSettings):
     tribute_api_key: str = ""
     tribute_payment_url: str = ""
     tribute_subscription_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
+    # HTTP-сервер: вебхук Tribute + админка.
     webhook_host: str = "0.0.0.0"
     webhook_port: int = 8080
+
+    # Веб-админка (/admin). Пусто = выключена.
+    admin_panel_password: str = ""
+    # Ключ подписи cookie; пусто = выводится из пароля (смена пароля разлогинивает всех).
+    admin_panel_secret: str = ""
+    # Часовой пояс для дат в админке, часы от UTC (3 = Москва).
+    admin_panel_utc_offset: int = 3
 
     stt_enabled: bool = False
     stt_base_url: str = "https://api.openai.com/v1"

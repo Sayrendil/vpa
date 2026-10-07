@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% from "_macros.html" import user_link, pager with context %}
+{% block title %}Tribute{% endblock %}
+{% block content %}
+<h1>События Tribute</h1>
+<div class="table-wrap"><table>
+  <tr><th>Когда</th><th>Событие</th><th>Кто</th><th>Подписка</th><th>До</th><th>Тело</th></tr>
+  {% for e in events %}
+  <tr>
+    <td class="nowrap">{{ e.created_at | dt }}</td>
+    <td>{{ e.name }}</td>
+    <td>{% if e.telegram_id %}{{ user_link(users.get(e.telegram_id), e.telegram_id) }}{% else %}—{% endif %}</td>
+    <td>{{ e.subscription_id or "—" }}</td>
+    <td class="nowrap">{{ e.expires_at | dt }}</td>
+    <td><details><summary>json</summary><pre class="small pre">{{ e.payload | pretty }}</pre></details></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">Вебхуков ещё не было.</td></tr>
+  {% endfor %}
+</table></div>
+{{ pager(page, has_next, page_url) }}
+{% endblock %}

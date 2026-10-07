@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}SI-01{% endblock %} · админка VPA</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7280; --border: #e3e6eb;
+  --accent: #2f6fed; --ok: #18884a; --bad: #c63737; --warn: #b7791f; --chip: #eef1f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c; --card: #1c2027; --text: #e6e8eb; --muted: #9aa3ae; --border: #2c323b;
+    --accent: #6b9bff; --ok: #4cc27f; --bad: #ff7676; --warn: #e3b04b; --chip: #262b33;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header { background: var(--card); border-bottom: 1px solid var(--border); }
+header .wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px; }
+header .brand { font-weight: 700; }
+header nav { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+header nav a { padding: 6px 10px; border-radius: 6px; color: var(--text); }
+header nav a.on { background: var(--chip); font-weight: 600; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 4px 0 16px; }
+h2 { font-size: 16px; margin: 24px 0 10px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.stat b { display: block; font-size: 24px; }
+.stat span { color: var(--muted); font-size: 12px; }
+.table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.nowrap { white-space: nowrap; }
+.pre { white-space: pre-wrap; word-break: break-word; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; white-space: nowrap; }
+.chip.MEMBER, .chip.approved, .chip.GOOD { color: var(--ok); }
+.chip.REJECTED, .chip.EXPIRED, .chip.rejected, .chip.open { color: var(--bad); }
+.chip.VERIFICATION_REVIEW, .chip.PAYMENT_PENDING, .chip.MEMBER_CANCELLED { color: var(--warn); }
+.flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; border: 1px solid var(--border); background: var(--card); }
+.flash.ok { border-color: var(--ok); }
+.flash.err { border-color: var(--bad); color: var(--bad); }
+form.inline { display: inline; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+input, select, textarea, button { font: inherit; color: inherit; }
+input[type=text], input[type=password], input[type=search], select, textarea {
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; max-width: 100%;
+}
+textarea { width: 100%; min-height: 80px; }
+button, .btn { background: var(--chip); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; display: inline-block; color: var(--text); }
+button:hover, .btn:hover { border-color: var(--accent); text-decoration: none; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.ok { color: var(--ok); }
+button.bad { color: var(--bad); }
+.pager { display: flex; gap: 8px; margin-top: 12px; }
+.chat { display: flex; flex-direction: column; gap: 6px; max-height: 600px; overflow-y: auto; }
+.msg { max-width: 80%; padding: 8px 10px; border-radius: 10px; background: var(--chip); }
+.msg.assistant { align-self: flex-end; background: color-mix(in srgb, var(--accent) 14%, var(--card)); }
+.msg .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.session-sep { text-align: center; font-size: 11px; color: var(--muted); margin: 6px 0; }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; }
+.cols { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 900px) { .cols { grid-template-columns: 360px 1fr; } }
+details summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+{% if path != "/admin/login" %}
+<header><div class="wrap">
+  <span class="brand">SI-01</span>
+  <nav>
+    <a href="/admin" class="{{ 'on' if path == '/admin' }}">Обзор</a>
+    <a href="/admin/requests" class="{{ 'on' if path.startswith('/admin/requests') }}">Запросы</a>
+    <a href="/admin/users" class="{{ 'on' if path.startswith('/admin/users') }}">Люди</a>
+    <a href="/admin/turns" class="{{ 'on' if path.startswith('/admin/turns') }}">Ходы</a>
+    <a href="/admin/tribute" class="{{ 'on' if path.startswith('/admin/tribute') }}">Tribute</a>
+  </nav>
+  <form method="post" action="/admin/logout" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Выйти</button>
+  </form>
+</div></header>
+{% endif %}
+<main class="wrap">
+{% if flash %}<div class="flash ok">{{ flash }}</div>{% endif %}
+{% if flash_error %}<div class="flash err">{{ flash_error }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

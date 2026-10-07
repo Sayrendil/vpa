@@ -3,6 +3,7 @@ pyproject.toml
 si01/__init__.py
 si01/__main__.py
 si01/actions.py
+si01/admin_web.py
 si01/brain.py
 si01/config.py
 si01/db.py
@@ -10,6 +11,7 @@ si01/facts.py
 si01/flows.py
 si01/states.py
 si01/stt.py
+si01/stub_llm.py
 si01/telegram.py
 si01/tribute.py
 si01.egg-info/PKG-INFO
@@ -17,5 +19,15 @@ si01.egg-info/SOURCES.txt
 si01.egg-info/dependency_links.txt
 si01.egg-info/requires.txt
 si01.egg-info/top_level.txt
+si01/templates/_macros.html
+si01/templates/base.html
+si01/templates/dashboard.html
+si01/templates/login.html
+si01/templates/requests.html
+si01/templates/tribute.html
+si01/templates/turns.html
+si01/templates/user.html
+si01/templates/users.html
+tests/test_admin_web.py
 tests/test_flow.py
 tests/test_telegram.py

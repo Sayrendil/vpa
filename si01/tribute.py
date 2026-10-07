@@ -61,7 +61,7 @@ async def process_event(database: Database, outbox: flows.Outbox, settings: Sett
     return "ok" if relevant else "ignored"
 
 
-def build_app(database: Database, outbox: flows.Outbox, settings: Settings) -> web.Application:
+def setup_tribute(app: web.Application, database: Database, outbox: flows.Outbox, settings: Settings) -> None:
     async def handle(request: web.Request) -> web.Response:
         body = await request.read()
         if not verify_signature(body, request.headers.get("trbt-signature"), settings.tribute_api_key):
@@ -75,10 +75,4 @@ def build_app(database: Database, outbox: flows.Outbox, settings: Settings) -> w
         log.info("tribute webhook: %s", result)
         return web.json_response({"status": "ok"})
 
-    async def health(_: web.Request) -> web.Response:
-        return web.Response(text="ok")
-
-    app = web.Application()
     app.router.add_post("/webhook/tribute", handle)
-    app.router.add_get("/health", health)
-    return app

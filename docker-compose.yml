@@ -5,7 +5,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://si01:${POSTGRES_PASSWORD:-si01}@db/si01
     ports:
-      - "8080:8080"   # вебхук Tribute; снаружи закрыть reverse-proxy с HTTPS
+      - "${HTTP_PORT:-80}:8080"   # админка /admin и вебхук Tribute /webhook/tribute
     volumes:
       - ./config:/app/config:ro    # факты и приветствия правятся без пересборки (нужен рестарт)
       - ./prompts:/app/prompts:ro

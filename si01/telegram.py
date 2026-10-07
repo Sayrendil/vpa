@@ -118,14 +118,14 @@ async def get_user(db, tg_user) -> User:
 
 
 def build_router(settings: Settings, database: Database, brain: Brain, facts: Facts,
-                 greetings: list[str], stt: SpeechToText | None) -> Router:
+                 greetings: list[str], stt: SpeechToText | None, locks: UserLocks | None = None) -> Router:
     root = Router()
     private = Router()
     private.message.filter(F.chat.type == ChatType.PRIVATE)
     admin = Router()
     admin.message.filter(F.chat.id == settings.admin_chat_id)
     root.include_routers(admin, private)
-    locks = UserLocks()
+    locks = locks or UserLocks()
 
     def is_admin(uid: int | None) -> bool:
         return uid in settings.admin_ids

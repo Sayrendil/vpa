@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field, request_row with context %}
+{% block title %}{{ u.first_name or u.telegram_id }}{% endblock %}
+{% block content %}
+<h1>{{ u.first_name or "без имени" }} <span class="muted">{% if u.username %}@{{ u.username }}{% endif %}</span></h1>
+<div class="cols">
+  <div>
+    <div class="card"><dl class="kv">
+      <dt>Telegram id</dt><dd><code>{{ u.telegram_id }}</code> · <a href="tg://user?id={{ u.telegram_id }}">открыть</a></dd>
+      <dt>Этап</dt><dd><span class="chip {{ u.stage }}">{{ u.stage }}</span></dd>
+      <dt>Проверка</dt><dd><span class="chip {{ u.verification_status }}">{{ u.verification_status }}</span></dd>
+      <dt>Оплата</dt><dd>{{ u.payment_status }}</dd>
+      <dt>Подписка</dt><dd>{{ u.membership_status }}</dd>
+      <dt>Доступ до</dt><dd>{{ u.membership_expires_at | dt }}</dd>
+      <dt>Сессия</dt><dd>№{{ u.session_no }}</dd>
+      <dt>Активность</dt><dd>{{ u.last_activity_at | dt }}</dd>
+      <dt>Пришёл</dt><dd>{{ u.created_at | dt }}</dd>
+    </dl></div>
+
+    {% if can_approve or can_reject %}
+    <div class="card">
+      <b>Решение по проверке</b>
+      <p class="muted small">Одобрение сразу отправит человеку кнопку оплаты Tribute.</p>
+      <form method="post" action="/admin/users/{{ u.telegram_id }}/decide">
+        {{ csrf_field(csrf) }}
+        {% if can_approve %}<button class="ok" name="decision" value="approve" onclick="return confirm('Одобрить и отправить ссылку на оплату?')">✅ Одобрить</button>{% endif %}
+        {% if can_reject %}<button class="bad" name="decision" value="reject" onclick="return confirm('Отклонить вступление?')">❌ Отклонить</button>{% endif %}
+      </form>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <b>Написать от администрации</b>
+      <p class="muted small">Уйдёт как «Сообщение от администрации VPA» и попадёт в историю разговора.</p>
+      <form method="post" action="/admin/users/{{ u.telegram_id }}/message">
+        {{ csrf_field(csrf) }}
+        <textarea name="text" required></textarea>
+        <p><button class="primary" type="submit">Отправить</button></p>
+      </form>
+    </div>
+
+    {% if u.session_summary %}
+    <div class="card"><b>Сжатая история сессии</b><p class="pre small">{{ u.session_summary }}</p></div>
+    {% endif %}
+  </div>
+
+  <div>
+    <div class="card">
+      <b>Переписка</b> <span class="muted small">последние {{ messages | length }}</span>
+      <div class="chat" id="chat" style="margin-top:10px">
+        {% set ns = namespace(sess=None) %}
+        {% for m in messages %}
+          {% if m.session_no != ns.sess %}<div class="session-sep">— сессия {{ m.session_no }} —</div>{% set ns.sess = m.session_no %}{% endif %}
+          <div class="msg {{ m.role }}"><div class="pre">{{ m.content }}</div><div class="meta">{{ m.created_at | dt }}{% if m.summarized %} · сжато{% endif %}</div></div>
+        {% else %}
+          <p class="muted">Сообщений нет.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>Запросы людям</h2>
+{% if reqs %}
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Тип</th><th>Суть</th><th>Статус</th><th></th></tr>
+  {% for r in reqs %}{{ request_row(r, u, csrf, request, show_user=False) }}{% endfor %}
+</table></div>
+{% else %}<p class="muted">Не было.</p>{% endif %}
+
+<h2>Ходы <a class="small" href="/admin/turns?user={{ u.telegram_id }}">все →</a></h2>
+{% if turns %}
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Этап</th><th>Человек → SI-01</th><th>Действия</th><th>Метка</th></tr>
+  {% for t in turns %}
+  <tr>
+    <td class="nowrap">#{{ t.id }}<div class="muted small">{{ t.created_at | dt }}</div></td>
+    <td class="small nowrap">{{ t.stage_before }}{% if t.stage_after != t.stage_before %}<br>→ {{ t.stage_after }}{% endif %}</td>
+    <td><div class="pre">{{ t.user_text }}</div><div class="pre muted">{{ t.reply_text }}</div></td>
+    <td class="small">{% for a in t.actions %}<div>{{ a.name }}{% if a.ok is sameas false %} ✗{% endif %}</div>{% endfor %}</td>
+    <td>{% if t.label %}<span class="chip {{ t.label }}">{{ t.label }}</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}<p class="muted">Нет.</p>{% endif %}
+
+{% if events %}
+<h2>События Tribute</h2>
+<div class="table-wrap"><table>
+  <tr><th>Когда</th><th>Событие</th><th>Подписка</th><th>До</th></tr>
+  {% for e in events %}<tr><td>{{ e.created_at | dt }}</td><td>{{ e.name }}</td><td>{{ e.subscription_id or "—" }}</td><td>{{ e.expires_at | dt }}</td></tr>{% endfor %}
+</table></div>
+{% endif %}
+<script>var c = document.getElementById("chat"); if (c) c.scrollTop = c.scrollHeight;</script>
+{% endblock %}

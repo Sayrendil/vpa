@@ -1,0 +1,47 @@
+{% macro user_link(u, uid) -%}
+{% if u %}<a href="/admin/users/{{ u.telegram_id }}">{{ u.first_name or "без имени" }}</a>
+  <span class="muted small">{% if u.username %}@{{ u.username }}{% else %}{{ u.telegram_id }}{% endif %}</span>
+{%- else %}<a href="/admin/users/{{ uid }}">{{ uid }}</a>{% endif %}
+{%- endmacro %}
+
+{% macro csrf_field(csrf) -%}
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ request.path_qs }}">
+{%- endmacro %}
+
+{% macro pager(page, has_next, page_url) -%}
+{% if page > 1 or has_next %}
+<div class="pager">
+  {% if page > 1 %}<a class="btn" href="{{ page_url(page - 1) }}">← Назад</a>{% endif %}
+  <span class="muted" style="padding:6px">стр. {{ page }}</span>
+  {% if has_next %}<a class="btn" href="{{ page_url(page + 1) }}">Дальше →</a>{% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro request_row(r, u, csrf, request, show_user=True) -%}
+<tr>
+  <td class="nowrap">#{{ r.id }}<div class="muted small">{{ r.created_at | dt }}</div></td>
+  <td>{{ KIND_TITLES.get(r.kind, r.kind) }}</td>
+  {% if show_user %}<td>{{ user_link(u, r.telegram_id) }}{% if u %}<div><span class="chip {{ u.stage }}">{{ u.stage }}</span></div>{% endif %}</td>{% endif %}
+  <td class="pre">{{ r.summary }}</td>
+  <td class="nowrap">
+    <span class="chip {{ r.status }}">{{ r.status }}</span>
+    {% if r.resolved_at %}<div class="muted small">{{ r.resolved_at | dt }}{% if r.resolved_by == PANEL_ADMIN_ID %} · панель{% elif r.resolved_by %} · {{ r.resolved_by }}{% endif %}</div>{% endif %}
+  </td>
+  <td class="nowrap">
+    {% if r.status == "open" %}
+      {% if r.kind in VERIFY_KINDS %}
+        <form method="post" action="/admin/users/{{ r.telegram_id }}/decide" class="inline">
+          {{ csrf_field(csrf) }}
+          <button class="ok" name="decision" value="approve" onclick="return confirm('Одобрить и отправить ссылку на оплату?')">✅ Одобрить</button>
+          <button class="bad" name="decision" value="reject" onclick="return confirm('Отклонить вступление?')">❌ Отклонить</button>
+        </form>
+      {% else %}
+        <form method="post" action="/admin/requests/{{ r.id }}/close" class="inline">
+          {{ csrf_field(csrf) }}<button>✔️ Закрыть</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </td>
+</tr>
+{%- endmacro %}

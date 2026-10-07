@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_macros.html" import pager with context %}
+{% block title %}Люди{% endblock %}
+{% block content %}
+<h1>Люди</h1>
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ q }}" placeholder="id, @username или имя">
+  <select name="stage" onchange="this.form.submit()">
+    <option value="">все этапы</option>
+    {% for s in STAGES %}<option value="{{ s }}" {{ 'selected' if s == stage }}>{{ s }}</option>{% endfor %}
+  </select>
+  <button type="submit">Найти</button>
+  {% if q or stage %}<a href="/admin/users">сбросить</a>{% endif %}
+</form>
+<div class="table-wrap"><table>
+  <tr><th>Человек</th><th>Этап</th><th>Проверка</th><th>Оплата</th><th>Подписка</th><th>Активность</th></tr>
+  {% for u in users %}
+  <tr>
+    <td><a href="/admin/users/{{ u.telegram_id }}">{{ u.first_name or "без имени" }}</a>
+      <div class="muted small">{% if u.username %}@{{ u.username }} · {% endif %}{{ u.telegram_id }}</div></td>
+    <td><span class="chip {{ u.stage }}">{{ u.stage }}</span></td>
+    <td><span class="chip {{ u.verification_status }}">{{ u.verification_status }}</span></td>
+    <td>{{ u.payment_status }}</td>
+    <td>{{ u.membership_status }}{% if u.membership_expires_at %}<div class="muted small">до {{ u.membership_expires_at | dt }}</div>{% endif %}</td>
+    <td class="nowrap">{{ u.last_activity_at | dt }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">Никого не нашли.</td></tr>
+  {% endfor %}
+</table></div>
+{{ pager(page, has_next, page_url) }}
+{% endblock %}

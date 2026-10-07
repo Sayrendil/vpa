@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_macros.html" import request_row, pager with context %}
+{% block title %}Запросы{% endblock %}
+{% block content %}
+<h1>Запросы людям</h1>
+<form class="filters" method="get">
+  <select name="status" onchange="this.form.submit()">
+    {% for v, t in [("open", "открытые"), ("approved", "одобренные"), ("rejected", "отклонённые"), ("closed", "закрытые"), ("all", "все")] %}
+    <option value="{{ v }}" {{ 'selected' if v == status }}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <select name="kind" onchange="this.form.submit()">
+    <option value="">все типы</option>
+    {% for k, t in kinds.items() %}<option value="{{ k }}" {{ 'selected' if k == kind }}>{{ t }}</option>{% endfor %}
+  </select>
+</form>
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Тип</th><th>Кто</th><th>Суть</th><th>Статус</th><th></th></tr>
+  {% for r in reqs %}{{ request_row(r, users.get(r.telegram_id), csrf, request) }}
+  {% else %}<tr><td colspan="6" class="muted">Пусто.</td></tr>{% endfor %}
+</table></div>
+{{ pager(page, has_next, page_url) }}
+{% endblock %}

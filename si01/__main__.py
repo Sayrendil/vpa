@@ -1,4 +1,4 @@
-"""Запуск: python -m si01 — Telegram long polling + HTTP-сервер для вебхуков Tribute + фоновые задачи."""
+"""Запуск: python -m si01 — Telegram long polling + HTTP-сервер (вебхук Tribute, админка) + фоновые задачи."""
 
 import asyncio
 import logging
@@ -9,14 +9,15 @@ from aiogram import Bot, Dispatcher
 from aiohttp import web
 from sqlalchemy import delete, select
 
+from .admin_web import setup_admin
 from .brain import Brain
 from .config import get_settings
 from .db import AdminRequest, Database, Message, TurnLog, User, utcnow
 from .facts import load_facts, load_greetings
 from .states import Stage, refresh_membership
 from .stt import SpeechToText
-from .telegram import TelegramOutbox, build_router
-from .tribute import build_app
+from .telegram import TelegramOutbox, UserLocks, build_router
+from .tribute import setup_tribute
 
 log = logging.getLogger("si01")
 
@@ -37,6 +38,10 @@ async def housekeeping(database: Database, retention_days: int) -> None:
         except Exception:
             log.exception("housekeeping failed")
         await asyncio.sleep(3600)
+
+
+async def health(_: web.Request) -> web.Response:
+    return web.Response(text="ok")
 
 
 async def main() -> None:
@@ -65,24 +70,37 @@ async def main() -> None:
 
     bot = Bot(s.bot_token)
     dp = Dispatcher()
-    dp.include_router(build_router(s, database, brain, facts, greetings, stt))
+    locks = UserLocks()  # общие для бота и админки: решение из панели не пересекается с ходом человека
+    dp.include_router(build_router(s, database, brain, facts, greetings, stt, locks))
 
-    runner = None
+    app = web.Application()
+    app.router.add_get("/health", health)
     if s.tribute_api_key:
-        runner = web.AppRunner(build_app(database, TelegramOutbox(bot, s, facts), s))
-        await runner.setup()
-        await web.TCPSite(runner, s.webhook_host, s.webhook_port).start()
-        log.info("Tribute webhook: http://%s:%s/webhook/tribute", s.webhook_host, s.webhook_port)
+        setup_tribute(app, database, TelegramOutbox(bot, s, facts), s)
+        log.info("Tribute webhook: /webhook/tribute")
     else:
         log.warning("TRIBUTE_API_KEY пуст — вебхуки Tribute выключены")
+    if s.admin_panel_password:
+        setup_admin(app, s, database, bot, facts, locks, info={
+            "Модель": s.llm_model if s.anthropic_api_key else "ТЕСТОВЫЙ РЕЖИМ БЕЗ AI",
+            "Промпт": brain.prompt_version, "Факты": facts.version,
+            "Голос": "вкл" if stt else "выкл", "Tribute": "вкл" if s.tribute_api_key else "выкл",
+            "Хранение логов": f"{s.log_retention_days} дн.", "Сессия": f"{s.session_idle_hours} ч тишины",
+        })
+        log.info("Админка: /admin")
+    else:
+        log.warning("ADMIN_PANEL_PASSWORD пуст — веб-админка выключена")
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, s.webhook_host, s.webhook_port).start()
+    log.info("HTTP: http://%s:%s", s.webhook_host, s.webhook_port)
 
     hk = asyncio.create_task(housekeeping(database, s.log_retention_days))
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         hk.cancel()
-        if runner:
-            await runner.cleanup()
+        await runner.cleanup()
         await bot.session.close()
         await database.dispose()
 

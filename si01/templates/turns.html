@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "_macros.html" import user_link, csrf_field, pager with context %}
+{% block title %}Ходы{% endblock %}
+{% block content %}
+<h1>Ходы для разбора</h1>
+<form class="filters" method="get">
+  <select name="label" onchange="this.form.submit()">
+    <option value="">все</option>
+    <option value="_none" {{ 'selected' if label == '_none' }}>без метки</option>
+    <option value="_any" {{ 'selected' if label == '_any' }}>с меткой</option>
+    {% for l in LABELS %}<option value="{{ l }}" {{ 'selected' if l == label }}>{{ l }}</option>{% endfor %}
+  </select>
+  <label><input type="checkbox" name="fallback" value="1" {{ 'checked' if fallback }} onchange="this.form.submit()"> только фолбэки</label>
+  <input type="text" name="user" value="{{ uid }}" placeholder="telegram id" size="12">
+  <button type="submit">Показать</button>
+</form>
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Кто / этап</th><th>Человек → SI-01</th><th>Тех.</th><th>Метка</th></tr>
+  {% for t in turns %}
+  <tr>
+    <td class="nowrap">#{{ t.id }}<div class="muted small">{{ t.created_at | dt }}</div></td>
+    <td class="small">{{ user_link(users.get(t.telegram_id), t.telegram_id) }}
+      <div class="nowrap">{{ t.stage_before }}{% if t.stage_after != t.stage_before %} → {{ t.stage_after }}{% endif %}</div></td>
+    <td style="min-width:280px"><div class="pre">{{ t.user_text }}</div><div class="pre muted" style="margin-top:6px">{{ t.reply_text }}</div></td>
+    <td class="small">
+      {% for a in t.actions %}<div>⚙️ {{ a.name }}{% if a.ok is sameas false %} <span style="color:var(--bad)">✗</span>{% endif %}</div>{% endfor %}
+      {% if t.fallback_used %}<div style="color:var(--warn)">фолбэк: {{ t.fallback_used }}</div>{% endif %}
+      <div class="muted nowrap">{{ t.latency_ms }} мс · p{{ t.prompt_version }} · f{{ t.facts_version }}</div>
+      <details><summary>usage</summary><pre class="small">{{ t.usage | pretty }}</pre></details>
+    </td>
+    <td style="min-width:200px">
+      <form method="post" action="/admin/turns/{{ t.id }}/label">
+        {{ csrf_field(csrf) }}
+        <select name="label">
+          <option value="">—</option>
+          {% for l in LABELS %}<option value="{{ l }}" {{ 'selected' if l == t.label }}>{{ l }}</option>{% endfor %}
+        </select>
+        <input type="text" name="note" value="{{ t.label_note or '' }}" placeholder="комментарий" style="width:100%;margin-top:4px">
+        <button type="submit" style="margin-top:4px">Сохранить</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">Пусто.</td></tr>
+  {% endfor %}
+</table></div>
+{{ pager(page, has_next, page_url) }}
+{% endblock %}

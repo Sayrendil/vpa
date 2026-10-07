@@ -8,6 +8,7 @@ services:
     volumes:
       - ./config:/app/config:ro    # факты и приветствия правятся без пересборки (нужен рестарт)
       - ./prompts:/app/prompts:ro
+      - ./evals/results:/app/evals/results   # отчёты evals — сразу на хосте
     depends_on: [db]
     restart: unless-stopped
 

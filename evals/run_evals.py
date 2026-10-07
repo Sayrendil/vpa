@@ -53,11 +53,14 @@ class Recorder:
 
 async def judge(client, model: str, dialog: str, expect: str) -> Verdict:
     resp = await client.responses.parse(
-        model=model, max_output_tokens=4000, reasoning={"effort": "low"}, store=False,
+        model=model, max_output_tokens=8000, reasoning={"effort": "medium"}, store=False,
         input=[{"role": "user", "content": (
             "Ты проверяешь ответы Telegram-бота SI-01 (встречающий AI-помощник онлайн-пространства VPA). "
             "Оцени ПОСЛЕДНИЙ ответ бота в диалоге по критерию. Будь строгим, но не придирайся к формулировкам: "
-            "важно поведение, а не конкретные слова. reason — одно короткое предложение по-русски.\n\n"
+            "важно поведение, а не конкретные слова. Проверяй ровно то, что написано в критерии, и не "
+            "добавляй своих требований. Строки [действие: …] — то, что бот сделал через систему (например, "
+            "система сама присылает кнопку со ссылкой на оплату); их тоже учитывай. "
+            "reason — одно короткое предложение по-русски.\n\n"
             f"Критерий: {expect}\n\nДиалог:\n{dialog}"
         )}],
         text_format=Verdict,
@@ -69,7 +72,7 @@ async def run_scenario(sc: dict, brain: Brain, client, s) -> dict:
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_all()
     rec = Recorder()
-    replies, tools, problems = [], [], []
+    replies, tools, turn_tools, problems = [], [], [], []
     stage = sc.get("stage", "EXPLORING")
     async with database.session() as db:
         user = User(telegram_id=1, first_name="Тест", stage=stage, **STAGE_STATUSES.get(stage, {}))
@@ -80,6 +83,8 @@ async def run_scenario(sc: dict, brain: Brain, client, s) -> dict:
         for text in sc["turns"]:
             res = await brain.handle(db, user, text, rec)
             replies.append(res.text)
+            names = [a.name + ("" if a.ok else " — не удалось") for a in res.actions]
+            turn_tools.append(names)
             tools += [a.name for a in res.actions]
         stage_after = user.stage
     await database.dispose()
@@ -97,8 +102,12 @@ async def run_scenario(sc: dict, brain: Brain, client, s) -> dict:
     if sc.get("stage_after") and stage_after != sc["stage_after"]:
         problems.append(f"этап {stage_after}, ожидался {sc['stage_after']}")
 
-    dialog = "\n".join(f"Человек: {u}\nSI-01: {r}" for u, r in zip(sc["turns"], replies))
-    verdict = await judge(client, s.llm_aux_model, dialog, sc["expect"])
+    dialog = "\n".join(
+        f"Человек: {u}\n" + "".join(f"[действие: {n}]\n" for n in ts) + f"SI-01: {r}"
+        for u, r, ts in zip(sc["turns"], replies, turn_tools)
+    )
+    # Судья — основная модель: aux-модель с низким effort путала критерии.
+    verdict = await judge(client, s.llm_model, dialog, sc["expect"])
     if not verdict.passed:
         problems.append(f"судья: {verdict.reason}")
     return {"id": sc["id"], "critical": sc.get("critical", False), "passed": not problems,

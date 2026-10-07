@@ -6,9 +6,12 @@ from datetime import timedelta
 
 import anthropic
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand, BotCommandScopeChat
 from aiohttp import web
 from sqlalchemy import delete, select
 
+from .admin_bot import build_admin_menu
+from .admin_ops import AdminOps
 from .admin_web import setup_admin
 from .brain import Brain
 from .config import get_settings
@@ -44,6 +47,17 @@ async def health(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
+async def set_admin_commands(bot: Bot, admin_ids: list[int]) -> None:
+    """/admin в меню команд — только в личке у админов. Не выйдет, если админ ещё не писал боту."""
+    for uid in admin_ids:
+        try:
+            await bot.set_my_commands([BotCommand(command="admin", description="Админ-меню"),
+                                       BotCommand(command="reset", description="Сбросить себя в начало (тест)")],
+                                      scope=BotCommandScopeChat(chat_id=uid))
+        except Exception as e:
+            log.info("cannot set admin commands for %s: %s", uid, e)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     s = get_settings()
@@ -70,8 +84,11 @@ async def main() -> None:
 
     bot = Bot(s.bot_token)
     dp = Dispatcher()
-    locks = UserLocks()  # общие для бота и админки: решение из панели не пересекается с ходом человека
+    locks = UserLocks()  # общие для бота и админок: решение админа не пересекается с ходом человека
+    ops = AdminOps(s, database, bot, facts, locks)
+    dp.include_router(build_admin_menu(ops))  # раньше разговора: ввод админа в меню не уходит модели
     dp.include_router(build_router(s, database, brain, facts, greetings, stt, locks))
+    await set_admin_commands(bot, s.admin_ids)
 
     app = web.Application()
     app.router.add_get("/health", health)
@@ -81,7 +98,7 @@ async def main() -> None:
     else:
         log.warning("TRIBUTE_API_KEY пуст — вебхуки Tribute выключены")
     if s.admin_panel_password:
-        setup_admin(app, s, database, bot, facts, locks, info={
+        setup_admin(app, ops, info={
             "Модель": s.llm_model if s.anthropic_api_key else "ТЕСТОВЫЙ РЕЖИМ БЕЗ AI",
             "Промпт": brain.prompt_version, "Факты": facts.version,
             "Голос": "вкл" if stt else "выкл", "Tribute": "вкл" if s.tribute_api_key else "выкл",

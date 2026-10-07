@@ -4,15 +4,15 @@
 {% block content %}
 <h1>Обзор</h1>
 <div class="grid">
-  <a class="stat" href="/admin/requests"><b>{{ open_reqs | length }}{% if open_reqs | length == 20 %}+{% endif %}</b><span>открытых запросов</span></a>
-  <a class="stat" href="/admin/users"><b>{{ total }}</b><span>людей всего · +{{ users_day }} за сутки</span></a>
-  <a class="stat" href="/admin/turns"><b>{{ turns_day }}</b><span>ходов за сутки</span></a>
-  <a class="stat" href="/admin/turns?fallback=1"><b>{{ fallbacks_day }}</b><span>фолбэков за сутки</span></a>
+  <a class="stat" href="/admin/requests"><b>{{ ov.open_count }}</b><span>открытых запросов</span></a>
+  <a class="stat" href="/admin/users"><b>{{ ov.total }}</b><span>людей всего · +{{ ov.users_day }} за сутки</span></a>
+  <a class="stat" href="/admin/turns"><b>{{ ov.turns_day }}</b><span>ходов за сутки</span></a>
+  <a class="stat" href="/admin/turns?fallback=1"><b>{{ ov.fallbacks_day }}</b><span>фолбэков за сутки</span></a>
 </div>
 
 <h2>По этапам</h2>
 <div class="grid">
-  {% for stage, n in stages %}
+  {% for stage, n in ov.stages %}
   <a class="stat" href="/admin/users?stage={{ stage }}"><b>{{ n }}</b><span class="chip {{ stage }}">{{ stage }}</span></a>
   {% endfor %}
 </div>
@@ -25,10 +25,10 @@
 </table></div>
 {% else %}<p class="muted">Нет открытых запросов.</p>{% endif %}
 
-{% if labels %}
+{% if ov.labels %}
 <h2>Разметка ходов</h2>
 <div class="grid">
-  {% for l, n in labels %}<a class="stat" href="/admin/turns?label={{ l }}"><b>{{ n }}</b><span class="chip {{ l }}">{{ l }}</span></a>{% endfor %}
+  {% for l, n in ov.labels %}<a class="stat" href="/admin/turns?label={{ l }}"><b>{{ n }}</b><span class="chip {{ l }}">{{ l }}</span></a>{% endfor %}
 </div>
 {% endif %}
 

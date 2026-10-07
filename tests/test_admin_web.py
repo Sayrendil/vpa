@@ -4,10 +4,11 @@ import re
 
 import pytest
 from aiogram import Bot
-from aiogram.methods import EditMessageReplyMarkup, SendMessage
+from aiogram.methods import EditMessageReplyMarkup
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from si01.admin_ops import AdminOps
 from si01.admin_web import setup_admin
 from si01.db import AdminRequest, Message, TurnLog, User
 from si01.telegram import UserLocks
@@ -28,7 +29,7 @@ async def panel(settings, facts, database):
     settings.admin_panel_password = "pw"
     session = PanelSession()
     app = web.Application()
-    setup_admin(app, settings, database, Bot("123:abc", session=session), facts, UserLocks(), info={"Модель": "x"})
+    setup_admin(app, AdminOps(settings, database, Bot("123:abc", session=session), facts, UserLocks()), info={"Модель": "x"})
     client = TestClient(TestServer(app))
     await client.start_server()
     yield client, session

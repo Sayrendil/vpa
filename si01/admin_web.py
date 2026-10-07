@@ -14,18 +14,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
-from aiogram import Bot
 from aiohttp import web
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy import func, or_, select
 from yarl import URL
 
-from . import flows
-from .config import Settings
-from .db import AdminRequest, Database, Message, TributeEvent, TurnLog, User, aware, utcnow
-from .facts import Facts
+from .admin_ops import AdminOps
+from .db import AdminRequest, Message, TributeEvent, TurnLog, User, aware
 from .states import Source, Stage, can_transition
-from .telegram import KIND_TITLES, LABELS, VERIFY_KINDS, TelegramOutbox, UserLocks
+from .telegram import KIND_TITLES, LABELS, VERIFY_KINDS
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +31,7 @@ SESSION_TTL = 7 * 24 * 3600
 PER_PAGE = 50
 # resolved_by для решений из панели: у неё нет telegram_id.
 PANEL_ADMIN_ID = 0
+VIA = "через админ-панель"
 
 
 def redirect(location: str) -> web.Response:
@@ -41,13 +39,12 @@ def redirect(location: str) -> web.Response:
 
 
 class AdminPanel:
-    def __init__(self, settings: Settings, database: Database, bot: Bot, facts: Facts, locks: UserLocks,
-                 info: dict[str, str]):
-        self.s, self.database, self.bot, self.facts, self.locks = settings, database, bot, facts, locks
+    def __init__(self, ops: AdminOps, info: dict[str, str]):
+        self.ops, self.s, self.database = ops, ops.s, ops.database
         self.info = info
-        self.secret = (settings.admin_panel_secret or
-                       hashlib.sha256(f"si01-admin:{settings.admin_panel_password}".encode()).hexdigest()).encode()
-        self.tz = timezone(timedelta(hours=settings.admin_panel_utc_offset))
+        self.secret = (self.s.admin_panel_secret or
+                       hashlib.sha256(f"si01-admin:{self.s.admin_panel_password}".encode()).hexdigest()).encode()
+        self.tz = timezone(timedelta(hours=self.s.admin_panel_utc_offset))
         self.env = Environment(loader=FileSystemLoader(Path(__file__).parent / "templates"),
                                autoescape=select_autoescape(["html"]))
         self.env.filters["dt"] = self._fmt_dt
@@ -144,22 +141,12 @@ class AdminPanel:
     # ---------- обзор ----------
 
     async def dashboard(self, request: web.Request) -> web.Response:
-        day_ago = utcnow() - timedelta(days=1)
+        ov = await self.ops.overview()
         async with self.database.session() as db:
-            by_stage = dict((await db.execute(select(User.stage, func.count()).group_by(User.stage))).all())
             open_reqs = (await db.scalars(select(AdminRequest).where(AdminRequest.status == "open")
                                           .order_by(AdminRequest.created_at.desc()).limit(20))).all()
             users = await self._users_by_id(db, [r.telegram_id for r in open_reqs])
-            turns_day = await db.scalar(select(func.count()).select_from(TurnLog).where(TurnLog.created_at >= day_ago))
-            fallbacks_day = await db.scalar(select(func.count()).select_from(TurnLog).where(
-                TurnLog.created_at >= day_ago, TurnLog.fallback_used.is_not(None)))
-            users_day = await db.scalar(select(func.count()).select_from(User).where(User.created_at >= day_ago))
-            labels = dict((await db.execute(select(TurnLog.label, func.count()).where(TurnLog.label.is_not(None))
-                                            .group_by(TurnLog.label))).all())
-        stages = [(s.value, by_stage.get(s.value, 0)) for s in Stage]
-        return self.render(request, "dashboard.html", stages=stages, total=sum(by_stage.values()),
-                           open_reqs=open_reqs, users=users, turns_day=turns_day, fallbacks_day=fallbacks_day,
-                           users_day=users_day, labels=sorted(labels.items(), key=lambda kv: -kv[1]))
+        return self.render(request, "dashboard.html", ov=ov, open_reqs=open_reqs, users=users)
 
     @staticmethod
     async def _users_by_id(db, ids) -> dict[int, User]:
@@ -209,53 +196,14 @@ class AdminPanel:
     async def decide(self, request: web.Request) -> web.Response:
         uid = int(request.match_info["uid"])
         form = await request.post()
-        approve = form.get("decision") == "approve"
-        default = f"/admin/users/{uid}"
-        async with self.locks(uid), self.database.session() as db:
-            user = await db.get(User, uid)
-            if not user:
-                raise web.HTTPNotFound()
-            req = await db.scalar(select(AdminRequest).where(
-                AdminRequest.telegram_id == uid, AdminRequest.status == "open", AdminRequest.kind.in_(VERIFY_KINDS))
-                .order_by(AdminRequest.created_at.desc()))
-            out = TelegramOutbox(self.bot, self.s, self.facts)
-            stage_before = user.stage
-            try:
-                note = await flows.decide(db, out, user, approve=approve, admin_id=PANEL_ADMIN_ID, req=req)
-            except Exception:
-                log.exception("admin panel: decide failed for %s", uid)
-                await db.rollback()
-                raise self.back(form, default, err="Не удалось отправить человеку сообщение — решение не сохранено")
-            done = user.stage != stage_before
-            await db.commit()
-            await out.flush()
-        if not done:
-            raise self.back(form, default, err=note)
-        await self._mark_card(req, f"{note} — через админ-панель")
-        if not req:
-            await self._admin_chat(f"{note}: {uid} (@{user.username or '—'}) — через админ-панель")
-        raise self.back(form, default, msg=note)
+        res = await self.ops.decide(uid, approve=form.get("decision") == "approve", admin_id=PANEL_ADMIN_ID, via=VIA)
+        raise self.back(form, f"/admin/users/{uid}", **{"msg" if res.ok else "err": res.text})
 
     async def send_message(self, request: web.Request) -> web.Response:
         uid = int(request.match_info["uid"])
         form = await request.post()
-        text = str(form.get("text", "")).strip()
-        default = f"/admin/users/{uid}"
-        if not text:
-            raise self.back(form, default, err="Пустое сообщение")
-        full = f"Сообщение от администрации VPA:\n\n{text}"
-        async with self.locks(uid), self.database.session() as db:
-            user = await db.get(User, uid)
-            if not user:
-                raise web.HTTPNotFound()
-            try:
-                await self.bot.send_message(uid, full)
-            except Exception as e:
-                log.warning("admin panel: cannot message %s: %s", uid, e)
-                raise self.back(form, default, err=f"Telegram не доставил: {e}")
-            await flows.log_assistant(db, user, full)
-            await db.commit()
-        raise self.back(form, default, msg="📨 Отправлено")
+        res = await self.ops.message_user(uid, str(form.get("text", "")))
+        raise self.back(form, f"/admin/users/{uid}", **{"msg" if res.ok else "err": res.text})
 
     # ---------- запросы ----------
 
@@ -275,35 +223,9 @@ class AdminPanel:
                            page_url=lambda p: self.page_url(request, p))
 
     async def close_request(self, request: web.Request) -> web.Response:
-        rid = int(request.match_info["rid"])
         form = await request.post()
-        async with self.database.session() as db:
-            req = await db.get(AdminRequest, rid)
-            if not req or req.status != "open":
-                raise self.back(form, "/admin/requests", err="Запрос уже закрыт")
-            req.status, req.resolved_by, req.resolved_at = "closed", PANEL_ADMIN_ID, utcnow()
-            await db.commit()
-        await self._mark_card(req, "✔️ Закрыто через админ-панель")
-        raise self.back(form, "/admin/requests", msg=f"Запрос #{rid} закрыт")
-
-    async def _mark_card(self, req: AdminRequest | None, note: str) -> None:
-        """Убрать кнопки с карточки в админ-чате и ответить на неё, чтобы в чате было видно решение."""
-        if not req or not req.admin_message_id or not self.s.admin_chat_id:
-            return
-        try:
-            await self.bot.edit_message_reply_markup(chat_id=self.s.admin_chat_id, message_id=req.admin_message_id,
-                                                     reply_markup=None)
-        except Exception:
-            pass
-        await self._admin_chat(note, reply_to=req.admin_message_id)
-
-    async def _admin_chat(self, text: str, reply_to: int | None = None) -> None:
-        if not self.s.admin_chat_id:
-            return
-        try:
-            await self.bot.send_message(self.s.admin_chat_id, text, reply_to_message_id=reply_to)
-        except Exception:
-            log.exception("admin panel: cannot post to admin chat")
+        res = await self.ops.close_request(int(request.match_info["rid"]), admin_id=PANEL_ADMIN_ID, via=VIA)
+        raise self.back(form, "/admin/requests", **{"msg" if res.ok else "err": res.text})
 
     # ---------- ходы ----------
 
@@ -356,9 +278,8 @@ class AdminPanel:
                            has_next=len(rows) > PER_PAGE, page_url=lambda p: self.page_url(request, p))
 
 
-def setup_admin(app: web.Application, settings: Settings, database: Database, bot: Bot, facts: Facts,
-                locks: UserLocks, info: dict[str, str]) -> AdminPanel:
-    panel = AdminPanel(settings, database, bot, facts, locks, info)
+def setup_admin(app: web.Application, ops: AdminOps, info: dict[str, str]) -> AdminPanel:
+    panel = AdminPanel(ops, info)
     app.middlewares.append(panel.middleware)
 
     async def to_admin(_: web.Request):

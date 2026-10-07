@@ -1,9 +1,12 @@
-"""Админ-меню в личке с ботом: /admin — только для ADMIN_IDS, остальные его не видят.
+"""Админ-меню: /admin в личке с ботом и в админ-чате — только для ADMIN_IDS, остальные его не видят.
 
 Сводка, открытые запросы с решениями, поиск человека, сообщение от администрации, разметка ходов.
 Навигация — правкой одного сообщения через inline-кнопки (callback_data «am:…»);
 ввод текста (поиск, сообщение человеку) — через состояние FSM, «Отмена» или /cancel его сбрасывает.
 Роутер подключается до обычного разговора, поэтому текст админа в режиме ввода не уходит модели.
+
+В админ-чате админы переписываются между собой, поэтому ввод там принимается только ответом на
+запрос бота (ForceReply) — иначе первая же реплика коллеге ушла бы человеку.
 """
 
 import html
@@ -15,7 +18,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import Message as TgMessage
 from sqlalchemy import func, or_, select
 
@@ -54,9 +57,36 @@ def cut(text: str, n: int) -> str:
 def build_admin_menu(ops: AdminOps) -> Router:
     s = ops.s
     tz = timezone(timedelta(hours=s.admin_panel_utc_offset))
+    root = Router()
     r = Router()
-    r.message.filter(F.chat.type == ChatType.PRIVATE, F.from_user.id.in_(s.admin_ids))
+    denied = Router()
+    root.include_routers(r, denied)
+    in_menu_chat = (F.chat.type == ChatType.PRIVATE) | (F.chat.id == s.admin_chat_id)
+    r.message.filter(in_menu_chat, F.from_user.id.in_(s.admin_ids))
     r.callback_query.filter(F.data.startswith("am:"), F.from_user.id.in_(s.admin_ids))
+
+    @denied.callback_query(F.data.startswith("am:"))
+    async def on_denied(cb: CallbackQuery):
+        await cb.answer("Нет прав", show_alert=True)
+
+    async def is_input(msg: TgMessage, state: FSMContext) -> bool:
+        """Это ответ на запрос ввода? В личке — любое сообщение, в группе — только реплай на запрос бота."""
+        if msg.chat.type == ChatType.PRIVATE:
+            return True
+        prompt_id = (await state.get_data()).get("prompt_id")
+        return bool(msg.reply_to_message and msg.reply_to_message.message_id == prompt_id)
+
+    async def ask(where: TgMessage, admin, state: FSMContext, st: State, text: str, **data) -> None:
+        """Запросить текст: в личке — с кнопкой «Отмена», в группе — ForceReply адресно этому админу."""
+        await state.set_state(st)
+        if where.chat.type == ChatType.PRIVATE:
+            sent = await where.answer(text, parse_mode="HTML", reply_markup=CANCEL_KB)
+        else:
+            mention = f'<a href="tg://user?id={admin.id}">{html.escape(admin.first_name)}</a>'
+            sent = await where.answer(f"{mention}, {text}\n<i>Ответь реплаем на это сообщение. /cancel — отмена.</i>",
+                                      parse_mode="HTML",
+                                      reply_markup=ForceReply(selective=True, input_field_placeholder="Текст…"))
+        await state.update_data(prompt_id=sent.message_id, **data)
 
     def dt(v: datetime | None) -> str:
         v = aware(v)
@@ -228,8 +258,7 @@ def build_admin_menu(ops: AdminOps) -> Router:
 
     @r.callback_query(F.data == "am:find")
     async def on_find(cb: CallbackQuery, state: FSMContext):
-        await state.set_state(AdminInput.search)
-        await show(cb, "🔎 Пришли telegram id, @username или имя.", CANCEL_KB)
+        await ask(cb.message, cb.from_user, state, AdminInput.search, "🔎 пришли telegram id, @username или имя.")
         await cb.answer()
 
     @r.callback_query(F.data.startswith("am:wr:"))
@@ -237,12 +266,10 @@ def build_admin_menu(ops: AdminOps) -> Router:
         uid = int(cb.data.split(":")[2])
         async with ops.database.session() as db:
             u = await db.get(User, uid)
-        await state.set_state(AdminInput.write)
-        await state.update_data(uid=uid)
         # Новым сообщением, чтобы карточка запроса/профиля осталась на месте.
-        await cb.message.answer(f"✉️ Напиши сообщение для {short(u, uid)}.\n"
-                                "Уйдёт как «Сообщение от администрации VPA» и попадёт в историю разговора.",
-                                parse_mode="HTML", reply_markup=CANCEL_KB)
+        await ask(cb.message, cb.from_user, state, AdminInput.write,
+                  f"✉️ напиши сообщение для {short(u, uid)}.\n"
+                  "Уйдёт как «Сообщение от администрации VPA» и попадёт в историю разговора.", uid=uid)
         await cb.answer()
 
     @r.callback_query(F.data == "am:lb")
@@ -267,7 +294,7 @@ def build_admin_menu(ops: AdminOps) -> Router:
 
     # ---------- ввод текста ----------
 
-    @r.message(AdminInput.search, F.text)
+    @r.message(AdminInput.search, F.text, ~F.text.startswith("/"), is_input)
     async def on_search(msg: TgMessage, state: FSMContext):
         q = msg.text.strip()
         like = f"%{q.lstrip('@').lower()}%"
@@ -278,8 +305,8 @@ def build_admin_menu(ops: AdminOps) -> Router:
             found = (await db.scalars(select(User).where(or_(*conds))
                                       .order_by(User.last_activity_at.desc().nulls_last()).limit(11))).all()
         if not found:
-            return await msg.answer(f"Не нашёл «{html.escape(q)}». Пришли ещё раз или нажми «Отмена».",
-                                    parse_mode="HTML", reply_markup=CANCEL_KB)
+            return await ask(msg, msg.from_user, state, AdminInput.search,
+                             f"не нашёл «{html.escape(q)}». Пришли id, @username или имя ещё раз.")
         await state.clear()
         if len(found) == 1:
             return await show(msg, *await profile_view(found[0].telegram_id))
@@ -288,7 +315,7 @@ def build_admin_menu(ops: AdminOps) -> Router:
         more = "\nПоказаны первые 10 — уточни запрос." if len(found) > 10 else ""
         await msg.answer(f"Нашёл несколько:{more}", reply_markup=kb(*rows, MENU_ROW))
 
-    @r.message(AdminInput.write, F.text, ~F.text.startswith("/"))
+    @r.message(AdminInput.write, F.text, ~F.text.startswith("/"), is_input)
     async def on_write_text(msg: TgMessage, state: FSMContext):
         uid = (await state.get_data())["uid"]
         res = await ops.message_user(uid, msg.text)
@@ -296,8 +323,8 @@ def build_admin_menu(ops: AdminOps) -> Router:
             await state.clear()
         await msg.answer(res.text, reply_markup=kb([btn("👤 Профиль", f"am:u:{uid}"), MENU_ROW[0]]))
 
-    @r.message(StateFilter(AdminInput))
+    @r.message(StateFilter(AdminInput), is_input)
     async def on_not_text(msg: TgMessage):
-        await msg.answer("Нужен текст. Или нажми «Отмена».", reply_markup=CANCEL_KB)
+        await msg.answer("Нужен текст. Или /cancel — отмена.")
 
-    return r
+    return root

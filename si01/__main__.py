@@ -47,8 +47,17 @@ async def health(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
-async def set_admin_commands(bot: Bot, admin_ids: list[int]) -> None:
-    """/admin в меню команд — только в личке у админов. Не выйдет, если админ ещё не писал боту."""
+async def set_admin_commands(bot: Bot, admin_ids: list[int], admin_chat_id: int) -> None:
+    """/admin в меню команд — только в админ-чате и в личке у админов (если админ уже писал боту)."""
+    if admin_chat_id:
+        try:
+            await bot.set_my_commands([BotCommand(command="admin", description="Админ-меню"),
+                                       BotCommand(command="user", description="Карточка: /user <id>"),
+                                       BotCommand(command="approve", description="Одобрить: /approve <id>"),
+                                       BotCommand(command="reject", description="Отклонить: /reject <id>")],
+                                      scope=BotCommandScopeChat(chat_id=admin_chat_id))
+        except Exception as e:
+            log.info("cannot set admin chat commands: %s", e)
     for uid in admin_ids:
         try:
             await bot.set_my_commands([BotCommand(command="admin", description="Админ-меню"),
@@ -88,7 +97,7 @@ async def main() -> None:
     ops = AdminOps(s, database, bot, facts, locks)
     dp.include_router(build_admin_menu(ops))  # раньше разговора: ввод админа в меню не уходит модели
     dp.include_router(build_router(s, database, brain, facts, greetings, stt, locks))
-    await set_admin_commands(bot, s.admin_ids)
+    await set_admin_commands(bot, s.admin_ids, s.admin_chat_id)
 
     app = web.Application()
     app.router.add_get("/health", health)

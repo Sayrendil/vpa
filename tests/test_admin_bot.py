@@ -38,11 +38,12 @@ def text(from_id, t):
         **({"entities": entities} if entities else {})})
 
 
-def press(data, from_id=ADMIN):
+def press(data, from_id=ADMIN, chat=None):
+    chat = chat or {"id": from_id, "type": "private"}
     return Update(update_id=next(_uid), callback_query={
         "id": "c", "chat_instance": "x", "data": data,
         "from": {"id": from_id, "is_bot": False, "first_name": "Админ", "username": "boss"},
-        "message": {"message_id": 900, "date": NOW, "chat": {"id": from_id, "type": "private"}, "text": "menu"}})
+        "message": {"message_id": 900, "date": NOW, "chat": chat, "text": "menu"}})
 
 
 def buttons(m):
@@ -119,3 +120,44 @@ async def test_label_turns(settings, facts, database):
     assert "Ход #1" in session.requests[-2].text
     async with database.session() as db:
         assert (await db.get(TurnLog, 2)).label == "TOO_SALESY"
+
+
+GROUP = -100
+
+
+def group_text(from_id, t, reply_to=None):
+    msg = {"message_id": 20, "date": NOW, "chat": {"id": GROUP, "type": "supergroup"}, "text": t,
+           "from": {"id": from_id, "is_bot": False, "first_name": "Админ", "username": "boss"}}
+    if t.startswith("/"):
+        msg["entities"] = [{"type": "bot_command", "offset": 0, "length": len(t.split()[0])}]
+    if reply_to:
+        msg["reply_to_message"] = {"message_id": reply_to, "date": NOW, "chat": {"id": GROUP, "type": "supergroup"},
+                                   "from": {"id": 123, "is_bot": True, "first_name": "SI-01"}, "text": "prompt"}
+    return Update(update_id=next(_uid), message=msg)
+
+
+def group_press(data, from_id=ADMIN):
+    return press(data, from_id, chat={"id": GROUP, "type": "supergroup"})
+
+
+async def test_menu_in_admin_group(settings, facts, database):
+    bot, dp, session = await make(settings, facts, database)
+    await dp.feed_update(bot, group_text(ADMIN, "/admin"))
+    assert "Админ-меню" in session.sent(GROUP)[-1].text
+    await dp.feed_update(bot, group_press("am:stats", from_id=555))  # не админ в группе
+    denied = session.requests[-1]
+    assert denied.text == "Нет прав" and denied.show_alert
+
+
+async def test_group_input_only_by_reply(settings, facts, database):
+    await seed(database)
+    bot, dp, session = await make(settings, facts, database)
+    await dp.feed_update(bot, group_press("am:wr:42"))
+    prompt = session.sent(GROUP)[-1]
+    prompt_id = session._mid
+    assert prompt.reply_markup.force_reply
+    await dp.feed_update(bot, group_text(ADMIN, "коллеги, я ему сейчас напишу"))  # просто болтовня в чате
+    assert not session.sent(42)
+    await dp.feed_update(bot, group_text(ADMIN, "Привет от администрации", reply_to=prompt_id))
+    assert session.sent(42)[-1].text.endswith("Привет от администрации")
+    assert session.sent(GROUP)[-1].text == "📨 Отправлено"

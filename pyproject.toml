@@ -1,0 +1,28 @@
+[project]
+name = "si01"
+version = "0.1.0"
+description = "SI-01 — встречающий Telegram-бот VPA"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.13",
+    "anthropic>=1.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "asyncpg>=0.29",
+    "pydantic-settings>=2.4",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["si01"]

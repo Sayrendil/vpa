@@ -1,0 +1,26 @@
+services:
+  si01:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://si01:${POSTGRES_PASSWORD:-si01}@db/si01
+    ports:
+      - "8080:8080"   # вебхук Tribute; снаружи закрыть reverse-proxy с HTTPS
+    volumes:
+      - ./config:/app/config:ro    # факты и приветствия правятся без пересборки (нужен рестарт)
+      - ./prompts:/app/prompts:ro
+    depends_on: [db]
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: si01
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-si01}
+      POSTGRES_DB: si01
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
